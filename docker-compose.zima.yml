@@ -1,0 +1,31 @@
+name: health-tracker
+
+services:
+  health-tracker:
+    image: ghcr.io/skrems/health-tracker:v0.9.1
+    container_name: health-tracker
+    restart: unless-stopped
+    ports:
+      - "8095:80"
+    environment:
+      TZ: "America/Los_Angeles"
+    volumes:
+      - /DATA/AppData/health-tracker/data:/data
+
+x-casaos:
+  architectures:
+    - amd64
+  main: health-tracker
+  author: skrems
+  category: Health
+  description:
+    en_us: Local dashboard for bloodwork, DEXA, and Wyze scale health data.
+  developer: skrems
+  icon: https://raw.githubusercontent.com/skrems/health-tracker/main/public/icon.svg
+  index: /
+  port_map: "8095"
+  scheme: http
+  tagline:
+    en_us: Local longitudinal health dashboard.
+  title:
+    en_us: Health Tracker
