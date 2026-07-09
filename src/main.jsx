@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Database,
   Download,
+  HardDrive,
   FolderSync,
   FileUp,
   FlaskConical,
@@ -604,10 +605,10 @@ function columnIndex(ref) {
 }
 
 function normalizeWarehouseRecord(row) {
-  const source = normalizeSource(row.source || row.kind || row.domain || row.category);
+  const source = inferWarehouseSource(row);
   const date = normalizeDate(row);
-  const metric = row.metric || row.marker || row.measurement || row.name;
-  const parsed = parseNumber(row.value ?? row.result ?? row.measurement_value);
+  const metric = row.metric || row.marker || row.Marker || row.test || row.Test || row.measurement || row.name;
+  const parsed = parseNumber(row.value ?? row.Value ?? row.result ?? row.Result ?? row.measurement_value);
   if (!source || !date || !metric || !parsed) return null;
   const range = parseRange(row.reference_range || row.referenceRange || row.range);
   return {
@@ -626,6 +627,17 @@ function normalizeWarehouseRecord(row) {
     externalId: row.id || row.external_id || '',
     importer: row.importer || row.provider || '',
   };
+}
+
+function inferWarehouseSource(row) {
+  const explicit = normalizeSource(row.source || row.kind || row.domain || row.category);
+  if (explicit) return explicit;
+
+  const hasLabMetric = Boolean(row.marker || row.Marker || row.test || row.Test);
+  const hasLabValue = row.value !== undefined || row.Value !== undefined || row.result !== undefined || row.Result !== undefined;
+  if (hasLabMetric && hasLabValue) return 'labs';
+
+  return null;
 }
 
 function normalizeSource(source) {
@@ -908,6 +920,14 @@ function App() {
   }, [records]);
 
   async function saveImport(source, fileName, normalized) {
+    if (!normalized.length) {
+      setMessage(`No recognized ${SOURCE_META[source].label.toLowerCase()} data points were found in ${fileName}. Check that the file matches the expected columns.`);
+      return;
+    }
+    if (storageMode === 'loading') {
+      setMessage('Storage is still connecting. Please retry the import in a moment.');
+      return;
+    }
     if (storageMode === 'sqlite') {
       try {
         const result = await postImport(source, fileName, normalized);
@@ -965,6 +985,11 @@ function App() {
           if (source === 'dexa') return normalizeDexaRows(row);
           return normalizeScaleRows(row);
         });
+        if (!normalized.length) {
+          setMessage(`Could not import ${file.name}: read ${data.length} CSV row${data.length === 1 ? '' : 's'}, but none matched the expected ${SOURCE_META[source].label.toLowerCase()} columns.`);
+          fileRefs[source].current.value = '';
+          return;
+        }
         await saveImport(source, file.name, normalized);
         fileRefs[source].current.value = '';
       },
@@ -1006,6 +1031,10 @@ function App() {
 
   async function importWarehouseRows(rows, fileName) {
     const normalized = rows.map(normalizeWarehouseRecord).filter(Boolean);
+    if (!normalized.length) {
+      setMessage(`Could not import ${fileName}: read ${rows.length} row${rows.length === 1 ? '' : 's'}, but none included recognizable source/date/metric/value data.`);
+      return;
+    }
     const grouped = normalized.reduce((acc, record) => {
       acc[record.source].push(record);
       return acc;
@@ -1082,6 +1111,13 @@ function App() {
     { label: 'Scale readings', value: new Set(records.scale.map((r) => r.date)).size, icon: Scale },
     { label: 'Flagged labs', value: flaggedLabs.length, icon: Activity },
   ];
+  const storageLabel = storageMode === 'sqlite' ? 'SQLite connected' : storageMode === 'browser' ? 'Browser storage' : 'Connecting storage';
+  const storageTitle = storageMode === 'sqlite'
+    ? 'Imports are saved to the SQLite API.'
+    : storageMode === 'browser'
+      ? 'SQLite API is unavailable, so imports are stored in this browser.'
+      : 'Checking the SQLite API before imports are enabled.';
+  const importsDisabled = storageMode === 'loading';
 
   return (
     <main className="app-shell">
@@ -1091,6 +1127,10 @@ function App() {
           <h1>Health Tracker</h1>
         </div>
         <div className="top-actions">
+          <span className={`storage-pill ${storageMode}`} title={storageTitle}>
+            {storageMode === 'sqlite' ? <Database size={15} /> : <HardDrive size={15} />}
+            {storageLabel}
+          </span>
           <button className="icon-button" onClick={exportData} title="Export local data">
             <Download size={18} />
           </button>
@@ -1120,7 +1160,7 @@ function App() {
                 onChange={(event) => importCsv(source, event.target.files[0])}
                 hidden
               />
-              <button className="primary-button" onClick={() => fileRefs[source].current.click()}>
+              <button className="primary-button" onClick={() => fileRefs[source].current.click()} disabled={importsDisabled}>
                 <FileUp size={17} />
                 Import CSV
               </button>
@@ -1147,7 +1187,7 @@ function App() {
           onChange={(event) => importWarehouseFile(event.target.files[0])}
           hidden
         />
-        <button className="secondary-button" onClick={() => fileRefs.warehouse.current.click()}>
+        <button className="secondary-button" onClick={() => fileRefs.warehouse.current.click()} disabled={importsDisabled}>
           <FileUp size={17} />
           Import Warehouse Export
         </button>

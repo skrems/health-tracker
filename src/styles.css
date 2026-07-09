@@ -28,6 +28,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .app-shell {
   width: min(1480px, calc(100% - 32px));
   margin: 0 auto;
@@ -70,7 +75,36 @@ h2 {
 
 .top-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.storage-pill.sqlite {
+  border-color: #a9dec2;
+  color: #145434;
+  background: #ecfdf3;
+}
+
+.storage-pill.browser,
+.storage-pill.loading {
+  border-color: #d8c8a1;
+  color: #60410e;
+  background: #fff8e7;
 }
 
 .icon-button {
