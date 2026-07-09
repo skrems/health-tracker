@@ -51,7 +51,7 @@ date,weight_lbs,body_fat_pct,muscle_mass_lbs,lean_body_mass_lbs,water_pct,bone_m
 2026-07-06,201.1,19.5,154.3,161.9,57.2,7.8,27.3,8
 ```
 
-Data is stored in your browser's local storage. Use the export button in the upper-right corner to download a JSON backup.
+When running through the Node server or Docker container, imported data is stored in SQLite. Local development uses `data/health-tracker.sqlite`; ZimaOS uses `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Health Overview
 

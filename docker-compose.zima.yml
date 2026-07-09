@@ -2,13 +2,14 @@ name: health-tracker
 
 services:
   health-tracker:
-    image: ghcr.io/skrems/health-tracker:v0.9.1
+    image: ghcr.io/skrems/health-tracker:v1.0.0
     container_name: health-tracker
     restart: unless-stopped
     ports:
       - "8095:80"
     environment:
       TZ: "America/Los_Angeles"
+      DB_PATH: "/data/health-tracker.sqlite"
     volumes:
       - /DATA/AppData/health-tracker/data:/data
 

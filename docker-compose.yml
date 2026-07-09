@@ -10,5 +10,6 @@ services:
       - "8095:80"
     environment:
       TZ: "America/Los_Angeles"
+      DB_PATH: "/data/health-tracker.sqlite"
     volumes:
       - ./data:/data

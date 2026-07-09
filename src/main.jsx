@@ -719,6 +719,44 @@ function sourceName(source) {
   return source;
 }
 
+function recordCount(grouped) {
+  return Object.values(grouped).reduce((sum, rows) => sum + rows.length, 0);
+}
+
+function readLocalRecords() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : INITIAL_STATE;
+  } catch {
+    return INITIAL_STATE;
+  }
+}
+
+async function fetchApiRecords() {
+  const response = await fetch('/api/measurements');
+  if (!response.ok) throw new Error('SQLite API is not available.');
+  return response.json();
+}
+
+async function postImport(source, fileName, records) {
+  const response = await fetch('/api/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, fileName, records }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || 'Import failed.');
+  }
+  return response.json();
+}
+
+async function clearApiRecords() {
+  const response = await fetch('/api/measurements', { method: 'DELETE' });
+  if (!response.ok) throw new Error('Could not clear SQLite records.');
+  return response.json();
+}
+
 function buildComparisonData(records, config) {
   const byDate = new Map();
   config.series.forEach((series) => {
@@ -761,14 +799,8 @@ function latestNearestComparison(records, config) {
 }
 
 function App() {
-  const [records, setRecords] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : INITIAL_STATE;
-    } catch {
-      return INITIAL_STATE;
-    }
-  });
+  const [records, setRecords] = useState(INITIAL_STATE);
+  const [storageMode, setStorageMode] = useState('loading');
   const [activeSource, setActiveSource] = useState('labs');
   const [selectedMetric, setSelectedMetric] = useState('');
   const [selectedComparison, setSelectedComparison] = useState(COMPARISON_METRICS[1].id);
@@ -782,8 +814,47 @@ function App() {
   };
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  }, [records]);
+    let cancelled = false;
+    async function loadRecords() {
+      try {
+        const apiRecords = await fetchApiRecords();
+        if (cancelled) return;
+        const localRecords = readLocalRecords();
+        if (recordCount(apiRecords) === 0 && recordCount(localRecords) > 0) {
+          let latest = apiRecords;
+          for (const source of ['labs', 'dexa', 'scale']) {
+            if (localRecords[source]?.length) {
+              const result = await postImport(source, 'localStorage migration', localRecords[source]);
+              latest = result.records;
+            }
+          }
+          if (!cancelled) {
+            setRecords(latest);
+            setStorageMode('sqlite');
+            setMessage(`Migrated ${recordCount(localRecords)} browser-stored data points into SQLite.`);
+          }
+          return;
+        }
+        setRecords(apiRecords);
+        setStorageMode('sqlite');
+      } catch {
+        if (cancelled) return;
+        setRecords(readLocalRecords());
+        setStorageMode('browser');
+        setMessage('SQLite API unavailable. Using browser storage fallback.');
+      }
+    }
+    loadRecords();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (storageMode === 'browser') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    }
+  }, [records, storageMode]);
 
   const allRecords = useMemo(() => Object.values(records).flat(), [records]);
   const activeRecords = records[activeSource] || [];
@@ -836,11 +907,33 @@ function App() {
     });
   }, [records]);
 
+  async function saveImport(source, fileName, normalized) {
+    if (storageMode === 'sqlite') {
+      try {
+        const result = await postImport(source, fileName, normalized);
+        setRecords(result.records);
+        setActiveSource(source);
+        setMessage(`Imported ${result.insertedCount} new ${SOURCE_META[source].label.toLowerCase()} data points into SQLite from ${fileName}. ${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'} skipped.`);
+        return;
+      } catch (error) {
+        setStorageMode('browser');
+        setMessage(`SQLite import failed: ${error.message}. Using browser storage fallback.`);
+      }
+    }
+
+    setRecords((current) => ({
+      ...current,
+      [source]: dedupeRecords(current[source], normalized),
+    }));
+    setActiveSource(source);
+    setMessage(`Imported ${normalized.length} ${SOURCE_META[source].label.toLowerCase()} data points from ${fileName}.`);
+  }
+
   function importCsv(source, file) {
     if (!file) return;
     const extension = file.name.split('.').pop()?.toLowerCase();
     if (source === 'scale' && ['xlsx', 'xls'].includes(extension)) {
-      parseWyzeWorkbookRows(file).then((rows) => {
+      parseWyzeWorkbookRows(file).then(async (rows) => {
         const normalized = rows.flatMap(normalizeScaleRows);
         if (!rows.length) {
           throw new Error('No scale rows were found after the Wyze header.');
@@ -848,12 +941,7 @@ function App() {
         if (!normalized.length) {
           throw new Error(`Read ${rows.length} Wyze rows, but no numeric measurements were recognized.`);
         }
-        setRecords((current) => ({
-          ...current,
-          scale: dedupeRecords(current.scale, normalized),
-        }));
-        setActiveSource('scale');
-        setMessage(`Imported ${normalized.length} scale data points from ${file.name}.`);
+        await saveImport('scale', file.name, normalized);
       }).catch((error) => {
         setMessage(`Could not parse ${file.name}: ${error?.message || 'expected a Wyze scale Excel export.'}`);
       }).finally(() => {
@@ -864,7 +952,7 @@ function App() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: ({ data, errors }) => {
+      complete: async ({ data, errors }) => {
         if (errors.length) {
           setMessage(`Could not fully parse ${file.name}. Check the CSV formatting.`);
           return;
@@ -877,12 +965,7 @@ function App() {
           if (source === 'dexa') return normalizeDexaRows(row);
           return normalizeScaleRows(row);
         });
-        setRecords((current) => ({
-          ...current,
-          [source]: dedupeRecords(current[source], normalized),
-        }));
-        setActiveSource(source);
-        setMessage(`Imported ${normalized.length} ${SOURCE_META[source].label.toLowerCase()} data points from ${file.name}.`);
+        await saveImport(source, file.name, normalized);
         fileRefs[source].current.value = '';
       },
     });
@@ -921,12 +1004,36 @@ function App() {
     });
   }
 
-  function importWarehouseRows(rows, fileName) {
+  async function importWarehouseRows(rows, fileName) {
     const normalized = rows.map(normalizeWarehouseRecord).filter(Boolean);
     const grouped = normalized.reduce((acc, record) => {
       acc[record.source].push(record);
       return acc;
     }, { labs: [], dexa: [], scale: [] });
+
+    if (storageMode === 'sqlite') {
+      try {
+        let latest = records;
+        let inserted = 0;
+        let duplicates = 0;
+        for (const source of ['labs', 'dexa', 'scale']) {
+          if (grouped[source].length) {
+            const result = await postImport(source, fileName, grouped[source]);
+            latest = result.records;
+            inserted += result.insertedCount;
+            duplicates += result.duplicateCount;
+          }
+        }
+        setRecords(latest);
+        const firstSource = Object.keys(grouped).find((source) => grouped[source].length);
+        if (firstSource) setActiveSource(firstSource);
+        setMessage(`Imported ${inserted} new warehouse data points into SQLite from ${fileName}. ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+        return;
+      } catch (error) {
+        setStorageMode('browser');
+        setMessage(`SQLite warehouse import failed: ${error.message}. Using browser storage fallback.`);
+      }
+    }
 
     setRecords((current) => ({
       labs: dedupeRecords(current.labs, grouped.labs),
@@ -949,10 +1056,23 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
-  function resetData() {
+  async function resetData() {
     if (window.confirm('Clear all imported health data from this browser?')) {
+      if (storageMode === 'sqlite') {
+        try {
+          const empty = await clearApiRecords();
+          setRecords(empty);
+          localStorage.removeItem(STORAGE_KEY);
+          setMessage('All SQLite health data has been cleared.');
+          return;
+        } catch (error) {
+          setMessage(`Could not clear SQLite data: ${error.message}`);
+          return;
+        }
+      }
       setRecords(INITIAL_STATE);
-      setMessage('All local health data has been cleared.');
+      localStorage.removeItem(STORAGE_KEY);
+      setMessage('All local browser health data has been cleared.');
     }
   }
 
