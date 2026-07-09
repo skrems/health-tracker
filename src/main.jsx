@@ -301,6 +301,14 @@ function rowHash(record) {
   ].join('|');
 }
 
+function createRecordId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const random = globalThis.crypto?.getRandomValues
+    ? Array.from(globalThis.crypto.getRandomValues(new Uint32Array(2)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `record-${Date.now().toString(36)}-${random}`;
+}
+
 function normalizeLabRow(row) {
   const date = normalizeDate(row);
   const metric = row.marker || row.Marker || row.test || row.Test;
@@ -308,7 +316,7 @@ function normalizeLabRow(row) {
   if (!date || !metric || !parsed) return null;
   const range = parseRange(row.reference_range || row.referenceRange || row.range);
   return {
-    id: crypto.randomUUID(),
+    id: createRecordId(),
     source: 'labs',
     date,
     metric: String(metric).trim(),
@@ -332,7 +340,7 @@ function normalizeDexaRows(row) {
     const parsed = parseNumber(row.value);
     if (!parsed) return [];
     return [{
-      id: crypto.randomUUID(),
+      id: createRecordId(),
       source: 'dexa',
       date,
       metric: String(row.metric).trim(),
@@ -358,7 +366,7 @@ function normalizeDexaRows(row) {
     const parsed = parseNumber(row[key] ?? row[camelize(key)]);
     if (!parsed) return [];
     return [{
-      id: crypto.randomUUID(),
+      id: createRecordId(),
       source: 'dexa',
       date,
       metric: label,
@@ -470,7 +478,7 @@ function pushMetric(records, row, key, label, unit, date, externalId, importer) 
   const parsed = parseNumber(row[key]);
   if (!parsed) return;
   records.push({
-    id: crypto.randomUUID(),
+    id: createRecordId(),
     source: 'dexa',
     date,
     metric: label,
@@ -519,7 +527,7 @@ function normalizeScaleRows(row) {
     const parsed = parseNumber(raw);
     if (!parsed) return [];
     return [{
-      id: crypto.randomUUID(),
+      id: createRecordId(),
       source: 'scale',
       date,
       metric: label,
@@ -612,7 +620,7 @@ function normalizeWarehouseRecord(row) {
   if (!source || !date || !metric || !parsed) return null;
   const range = parseRange(row.reference_range || row.referenceRange || row.range);
   return {
-    id: crypto.randomUUID(),
+    id: createRecordId(),
     source,
     date,
     metric: String(metric).trim(),

@@ -5,7 +5,7 @@ This project is prepared as a ZimaOS/CasaOS Docker app.
 ## Defaults
 
 - App name: `health-tracker`
-- Image: `ghcr.io/skrems/health-tracker:v1.0.1`
+- Image: `ghcr.io/skrems/health-tracker:v1.0.2`
 - Host port: `8095`
 - Container port: `80`
 - Persistent data: `/DATA/AppData/health-tracker/data`
@@ -31,7 +31,7 @@ Push the matching version tag so GitHub Actions publishes the GHCR image:
 
 ```bash
 git push origin main
-git push origin v1.0.1
+git push origin v1.0.2
 ```
 
 Make the GHCR package public if the ZimaBoard should pull without credentials.
@@ -59,7 +59,7 @@ Install from the ZimaOS dashboard:
 2. Choose Custom Install.
 3. Import Docker Compose.
 4. Upload or paste `docker-compose.zima.yml`.
-5. Confirm image `ghcr.io/skrems/health-tracker:v1.0.1`, port `8095`, and volume `/DATA/AppData/health-tracker/data:/data`.
+5. Confirm image `ghcr.io/skrems/health-tracker:v1.0.2`, port `8095`, and volume `/DATA/AppData/health-tracker/data:/data`.
 
 ## CLI Fallback
 
