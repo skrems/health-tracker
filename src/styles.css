@@ -107,6 +107,24 @@ h2 {
   background: #fff8e7;
 }
 
+.version-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d5dde8;
+  border-radius: 999px;
+  color: #607086;
+  background: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.report-button {
+  min-height: 36px;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -436,6 +454,143 @@ h2 {
   border: 1px solid #d8e0e9;
   border-radius: 8px;
   background: #fff;
+}
+
+.peptide-section,
+.health-report {
+  margin: 16px 0;
+  padding: 18px;
+  border: 1px solid #d8e0e9;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.peptide-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cdd8e6;
+  border-radius: 999px;
+  color: #52657b;
+  background: #f7f9fb;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.peptide-status.connected {
+  border-color: #add9c0;
+  color: #145434;
+  background: #ecfdf3;
+}
+
+.peptide-status.unavailable {
+  border-color: #ecd6ae;
+  color: #724b0c;
+  background: #fff9e9;
+}
+
+.peptide-controls {
+  display: grid;
+  grid-template-columns: minmax(210px, 300px) 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.peptide-controls label {
+  display: grid;
+  gap: 5px;
+}
+
+.peptide-controls label span {
+  color: #607086;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.peptide-controls select {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #cbd6e2;
+  border-radius: 8px;
+  color: #172234;
+  background: #fff;
+}
+
+.peptide-connection-copy {
+  padding-bottom: 10px;
+  color: #607086;
+  font-size: 0.92rem;
+}
+
+.report-toolbar,
+.report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-meta,
+.report-note {
+  color: #607086;
+  font-size: 0.88rem;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.report-metric {
+  display: grid;
+  gap: 5px;
+  min-height: 106px;
+  padding: 12px;
+  border: 1px solid #d8e0e9;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.report-metric span {
+  color: #607086;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.report-metric strong {
+  color: #172234;
+  font-size: 1.18rem;
+}
+
+.report-metric small {
+  color: #68788e;
+}
+
+.report-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.report-columns h3 {
+  margin: 0 0 9px;
+  color: #172234;
+  font-size: 1rem;
+}
+
+.report-table th {
+  position: static;
+}
+
+.report-table td,
+.report-table th {
+  padding: 8px;
 }
 
 .overview-alert {
@@ -878,6 +1033,11 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .peptide-controls,
+  .report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .metric-panel {
     position: static;
   }
@@ -919,6 +1079,19 @@ th {
     justify-content: stretch;
   }
 
+  .top-actions,
+  .report-toolbar,
+  .report-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .peptide-controls,
+  .report-grid,
+  .report-columns {
+    grid-template-columns: 1fr;
+  }
+
   .manual-form label,
   .manual-form button {
     width: 100%;
@@ -931,5 +1104,32 @@ th {
   th,
   td {
     padding: 9px 10px;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .app-shell > :not(.health-report) {
+    display: none !important;
+  }
+
+  .health-report {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .report-toolbar .report-actions {
+    display: none;
+  }
+
+  .report-grid,
+  .report-columns {
+    break-inside: avoid;
   }
 }

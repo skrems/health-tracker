@@ -2,7 +2,7 @@ name: health-tracker
 
 services:
   health-tracker:
-    image: ghcr.io/skrems/health-tracker:v1.1.0
+    image: ghcr.io/skrems/health-tracker:v1.2.0
     container_name: health-tracker
     restart: unless-stopped
     ports:
@@ -10,8 +10,10 @@ services:
     environment:
       TZ: "America/Los_Angeles"
       DB_PATH: "/data/health-tracker.sqlite"
+      PEPTIDE_DB_PATH: "/peptide-data/app.db"
     volumes:
       - /DATA/AppData/health-tracker/data:/data
+      - /DATA/AppData/peptide-power-assistant/data:/peptide-data:ro
 
 x-casaos:
   architectures:

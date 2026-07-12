@@ -11,6 +11,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const apiOnly = process.argv.includes('--api-only');
 const port = Number(process.env.PORT || process.env.APP_PORT || (apiOnly ? 3001 : 8080));
 const dbPath = process.env.DB_PATH || path.join(projectRoot, 'data', 'health-tracker.sqlite');
+const peptideDbPath = process.env.PEPTIDE_DB_PATH || '';
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -134,7 +135,75 @@ const app = express();
 app.use(express.json({ limit: '25mb' }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, dbPath });
+  res.json({ ok: true, dbPath, peptideIntegrationConfigured: Boolean(peptideDbPath) });
+});
+
+app.get('/api/peptides/users', (_req, res) => {
+  const peptideDb = openPeptideDb();
+  if (!peptideDb) {
+    res.json({ connected: false, users: [], reason: 'Peptide SQLite database is not configured.' });
+    return;
+  }
+
+  try {
+    const users = peptideDb.prepare(`
+      SELECT id, display_name AS displayName
+      FROM users
+      WHERE active = 1
+      ORDER BY display_name COLLATE NOCASE
+    `).all();
+    res.json({ connected: true, users });
+  } catch (error) {
+    res.json({ connected: false, users: [], reason: `Could not read peptide data: ${error.message}` });
+  } finally {
+    peptideDb.close();
+  }
+});
+
+app.get('/api/peptides/doses', (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!Number.isInteger(userId) || userId < 1) {
+    res.status(400).json({ error: 'A peptide userId is required.' });
+    return;
+  }
+
+  const peptideDb = openPeptideDb();
+  if (!peptideDb) {
+    res.status(503).json({ error: 'Peptide SQLite database is not configured.' });
+    return;
+  }
+
+  try {
+    const user = peptideDb.prepare(`
+      SELECT id, display_name AS displayName
+      FROM users
+      WHERE id = ? AND active = 1
+    `).get(userId);
+    if (!user) {
+      res.status(404).json({ error: 'Selected peptide user was not found.' });
+      return;
+    }
+    const doses = peptideDb.prepare(`
+      SELECT
+        id,
+        peptide_name AS peptideName,
+        actual_dose_amount AS actualDoseAmount,
+        dose_unit AS doseUnit,
+        status,
+        site,
+        notes,
+        logged_at AS loggedAt,
+        substr(logged_at, 1, 10) AS date
+      FROM dose_logs
+      WHERE user_id = ?
+      ORDER BY logged_at ASC, id ASC
+    `).all(userId);
+    res.json({ connected: true, user, doses });
+  } catch (error) {
+    res.status(500).json({ error: `Could not read peptide doses: ${error.message}` });
+  } finally {
+    peptideDb.close();
+  }
 });
 
 app.get('/api/measurements', (_req, res) => {
@@ -280,6 +349,15 @@ function cleanRecord(record) {
     measuredAt: record.measuredAt || undefined,
     provider: record.provider || undefined,
   };
+}
+
+function openPeptideDb() {
+  if (!peptideDbPath || !fs.existsSync(peptideDbPath)) return null;
+  try {
+    return new Database(peptideDbPath, { readonly: true, fileMustExist: true });
+  } catch {
+    return null;
+  }
 }
 
 function groupBySource(rows) {

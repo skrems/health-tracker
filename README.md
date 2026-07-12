@@ -57,6 +57,14 @@ When running through the Node server or Docker container, imported data is store
 
 The Health Overview section provides a single pane across bloodwork, DEXA, and Wyze data. It surfaces the latest values for body composition, cardiometabolic labs, inflammation, nutrients, and hormones, while showing paired DEXA/Wyze values where both methods exist.
 
+## Peptide Connection And Report
+
+When deployed to the ZimaBoard, Health Tracker mounts the Peptide Power Assistant data directory read-only. Select the matching peptide profile in the dashboard to include completed dose logs in the combined Health and Peptide Report.
+
+The report is available on screen and can be printed or saved as a PDF from the browser. It includes health snapshots, body and glucose trends, peptide-use totals, and exploratory correlations between each metric and injection-day frequency over the preceding seven days. These associations do not establish medical causation.
+
+The two apps retain separate SQLite databases. Health Tracker never writes to the peptide database.
+
 ## Method Comparison
 
 The dashboard includes a DEXA and Wyze overlay view for measurements that overlap across methods:

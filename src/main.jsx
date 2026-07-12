@@ -12,12 +12,15 @@ import {
   FolderSync,
   FileUp,
   FlaskConical,
+  FileText,
   Layers3,
   LineChart as LineChartIcon,
+  Printer,
   RotateCcw,
   Scale,
   ScanLine,
   Search,
+  Syringe,
   TrendingDown,
   TrendingUp,
   Upload,
@@ -37,6 +40,8 @@ const STORAGE_KEY = 'health-tracker-state-v1';
 const DATA_SOURCES = ['labs', 'dexa', 'scale', 'glucose'];
 const IMPORT_SOURCES = ['labs', 'dexa', 'scale'];
 const GLUCOSE_METRIC = 'Fasting Glucose';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'development';
+const PEPTIDE_USER_STORAGE_KEY = 'health-tracker-peptide-user-id';
 
 const SOURCE_META = {
   labs: {
@@ -822,6 +827,21 @@ async function clearApiRecords() {
   return response.json();
 }
 
+async function fetchPeptideUsers() {
+  const response = await fetch('/api/peptides/users');
+  if (!response.ok) throw new Error('Could not connect to peptide data.');
+  return response.json();
+}
+
+async function fetchPeptideDoses(userId) {
+  const response = await fetch(`/api/peptides/doses?userId=${encodeURIComponent(userId)}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || 'Could not load peptide doses.');
+  }
+  return response.json();
+}
+
 function buildComparisonData(records, config) {
   const byDate = new Map();
   config.series.forEach((series) => {
@@ -863,6 +883,83 @@ function latestNearestComparison(records, config) {
   };
 }
 
+function completedDoses(doses) {
+  return doses.filter((dose) => dose.status === 'completed');
+}
+
+function peptideSummary(doses) {
+  const completed = completedDoses(doses);
+  const byPeptide = new Map();
+  completed.forEach((dose) => {
+    const key = `${dose.peptideName}|${dose.doseUnit}`;
+    const current = byPeptide.get(key) || {
+      peptideName: dose.peptideName,
+      doseUnit: dose.doseUnit,
+      doses: 0,
+      total: 0,
+      dates: new Set(),
+    };
+    current.doses += 1;
+    current.total += Number(dose.actualDoseAmount) || 0;
+    current.dates.add(dose.date);
+    byPeptide.set(key, current);
+  });
+  return [...byPeptide.values()]
+    .map((item) => ({ ...item, activeDays: item.dates.size }))
+    .sort((a, b) => b.doses - a.doses || a.peptideName.localeCompare(b.peptideName));
+}
+
+function dateOffset(date, days) {
+  const value = new Date(`${date}T00:00:00`);
+  value.setDate(value.getDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function pearsonCorrelation(points) {
+  if (points.length < 8) return null;
+  const xMean = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+  const yMean = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+  let numerator = 0;
+  let xSquared = 0;
+  let ySquared = 0;
+  points.forEach(({ x, y }) => {
+    const xDiff = x - xMean;
+    const yDiff = y - yMean;
+    numerator += xDiff * yDiff;
+    xSquared += xDiff ** 2;
+    ySquared += yDiff ** 2;
+  });
+  if (!xSquared || !ySquared) return null;
+  return numerator / Math.sqrt(xSquared * ySquared);
+}
+
+function peptideHealthCorrelations(records, doses) {
+  const activeDates = new Set(completedDoses(doses).map((dose) => dose.date));
+  const metrics = [
+    { label: 'Weight', source: 'scale', metric: 'Weight', unit: 'lb' },
+    { label: 'Body Fat', source: 'scale', metric: 'Scale Body Fat %', unit: '%' },
+    { label: 'Lean Body Mass', source: 'scale', metric: 'Lean Body Mass', unit: 'lb' },
+    { label: 'Morning Glucose', source: 'glucose', metric: GLUCOSE_METRIC, unit: 'mg/dL' },
+  ];
+  return metrics.map((metric) => {
+    const points = dailyAverages(recordsForSeries(records, metric)).map((point) => {
+      let injections = 0;
+      for (let offset = 0; offset < 7; offset += 1) {
+        if (activeDates.has(dateOffset(point.date, -offset))) injections += 1;
+      }
+      return { x: injections, y: point.value };
+    });
+    return { ...metric, n: points.length, correlation: pearsonCorrelation(points) };
+  });
+}
+
+function correlationLabel(value) {
+  if (!Number.isFinite(value)) return 'Not enough varied overlap';
+  const direction = value > 0 ? 'positive' : value < 0 ? 'negative' : 'no clear';
+  const strength = Math.abs(value) >= 0.7 ? 'strong' : Math.abs(value) >= 0.4 ? 'moderate' : 'weak';
+  return `${strength} ${direction}`;
+}
+
 function App() {
   const [records, setRecords] = useState(INITIAL_STATE);
   const [storageMode, setStorageMode] = useState('loading');
@@ -873,6 +970,12 @@ function App() {
   const [message, setMessage] = useState('');
   const [glucoseDate, setGlucoseDate] = useState(todayDateString());
   const [glucoseValue, setGlucoseValue] = useState('');
+  const [peptideConnection, setPeptideConnection] = useState('loading');
+  const [peptideUsers, setPeptideUsers] = useState([]);
+  const [selectedPeptideUserId, setSelectedPeptideUserId] = useState(() => localStorage.getItem(PEPTIDE_USER_STORAGE_KEY) || '');
+  const [peptideData, setPeptideData] = useState({ user: null, doses: [] });
+  const [peptideError, setPeptideError] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
   const fileRefs = {
     labs: useRef(null),
     dexa: useRef(null),
@@ -916,6 +1019,55 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPeptideUsers()
+      .then((result) => {
+        if (cancelled) return;
+        setPeptideConnection(result.connected ? 'connected' : 'unavailable');
+        setPeptideUsers(result.users || []);
+        setPeptideError(result.reason || '');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setPeptideConnection('unavailable');
+        setPeptideError(error.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPeptideUserId) {
+      setPeptideData({ user: null, doses: [] });
+      return undefined;
+    }
+    let cancelled = false;
+    setPeptideConnection('loading-doses');
+    fetchPeptideDoses(selectedPeptideUserId)
+      .then((result) => {
+        if (cancelled) return;
+        setPeptideData({ user: result.user, doses: result.doses || [] });
+        setPeptideConnection('connected');
+        setPeptideError('');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setPeptideData({ user: null, doses: [] });
+        setPeptideConnection('unavailable');
+        setPeptideError(error.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPeptideUserId]);
+
+  useEffect(() => {
+    if (selectedPeptideUserId) localStorage.setItem(PEPTIDE_USER_STORAGE_KEY, selectedPeptideUserId);
+    else localStorage.removeItem(PEPTIDE_USER_STORAGE_KEY);
+  }, [selectedPeptideUserId]);
 
   useEffect(() => {
     if (storageMode === 'browser') {
@@ -973,6 +1125,9 @@ function App() {
       };
     });
   }, [records]);
+  const completedPeptideDoses = useMemo(() => completedDoses(peptideData.doses), [peptideData.doses]);
+  const peptideTotals = useMemo(() => peptideSummary(peptideData.doses), [peptideData.doses]);
+  const peptideCorrelations = useMemo(() => peptideHealthCorrelations(records, peptideData.doses), [records, peptideData.doses]);
 
   async function saveImport(source, fileName, normalized) {
     if (!normalized.length) {
@@ -1216,6 +1371,11 @@ function App() {
             {storageMode === 'sqlite' ? <Database size={15} /> : <HardDrive size={15} />}
             {storageLabel}
           </span>
+          <span className="version-pill" title="Installed Health Tracker version">{APP_VERSION}</span>
+          <button className="secondary-button report-button" onClick={() => setReportOpen(true)}>
+            <FileText size={17} />
+            Health Report
+          </button>
           <button className="icon-button" onClick={exportData} title="Export local data">
             <Download size={18} />
           </button>
@@ -1332,6 +1492,93 @@ function App() {
           );
         })}
       </section>
+
+      <section className="peptide-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Read-only connection</p>
+            <h2>Peptide Usage</h2>
+          </div>
+          <span className={`peptide-status ${peptideConnection}`}>
+            <Syringe size={15} />
+            {peptideConnection === 'connected' ? 'Connected' : peptideConnection === 'loading' || peptideConnection === 'loading-doses' ? 'Connecting' : 'Not connected'}
+          </span>
+        </div>
+        <div className="peptide-controls">
+          <label>
+            <span>Person</span>
+            <select
+              value={selectedPeptideUserId}
+              onChange={(event) => setSelectedPeptideUserId(event.target.value)}
+              disabled={peptideConnection === 'unavailable'}
+            >
+              <option value="">Select peptide profile</option>
+              {peptideUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
+            </select>
+          </label>
+          <div className="peptide-connection-copy">
+            {peptideData.user
+              ? `${completedPeptideDoses.length} completed doses across ${new Set(completedPeptideDoses.map((dose) => dose.date)).size} injection day${new Set(completedPeptideDoses.map((dose) => dose.date)).size === 1 ? '' : 's'}.`
+              : peptideError || 'Choose the peptide profile that belongs with this health dataset.'}
+          </div>
+          <button className="secondary-button report-button" onClick={() => setReportOpen(true)} disabled={!peptideData.user}>
+            <FileText size={17} />
+            Generate Combined Report
+          </button>
+        </div>
+      </section>
+
+      {reportOpen && (
+        <section className="health-report" id="health-report">
+          <div className="report-toolbar">
+            <div>
+              <p className="eyebrow">On-demand summary</p>
+              <h2>Health and Peptide Report</h2>
+            </div>
+            <div className="report-actions">
+              <button className="secondary-button" onClick={() => window.print()}>
+                <Printer size={17} />
+                Print or Save PDF
+              </button>
+              <button className="icon-button" onClick={() => setReportOpen(false)} title="Close report">x</button>
+            </div>
+          </div>
+          <p className="report-meta">Generated {new Date().toLocaleDateString()} · Health Tracker {APP_VERSION}{peptideData.user ? ` · Peptide profile: ${peptideData.user.displayName}` : ''}</p>
+          <div className="report-grid">
+            {overviewCards.slice(0, 7).map((card) => {
+              const latest = latestRecord(records, card.source, card.metric);
+              const trendForCard = summarizeTrend(recordsForSeries(records, card).filter((record) => record.unit === latest?.unit));
+              return (
+                <article className="report-metric" key={`report-${card.source}-${card.metric}`}>
+                  <span>{card.title}</span>
+                  <strong>{formatRecord(latest)}</strong>
+                  <small>{trendForCard ? `${formatDelta(trendForCard.delta)} ${trendForCard.last.unit} since ${trendForCard.first.date}` : 'One reading or less'}</small>
+                </article>
+              );
+            })}
+          </div>
+          <div className="report-columns">
+            <div>
+              <h3>Peptide Activity</h3>
+              {peptideData.user ? (
+                <table className="report-table">
+                  <thead><tr><th>Peptide</th><th>Doses</th><th>Active days</th><th>Total</th></tr></thead>
+                  <tbody>{peptideTotals.map((item) => <tr key={`${item.peptideName}-${item.doseUnit}`}><td>{item.peptideName}</td><td>{item.doses}</td><td>{item.activeDays}</td><td>{formatValue(item.total)} {item.doseUnit}</td></tr>)}</tbody>
+                </table>
+              ) : <p className="empty">Select a peptide profile to include its dosing history.</p>}
+            </div>
+            <div>
+              <h3>Health Associations</h3>
+              <p className="report-note">Exploratory only: Pearson correlation of each metric with the number of injection days in the preceding 7 days. It cannot show that peptides caused a change.</p>
+              <table className="report-table">
+                <thead><tr><th>Metric</th><th>Overlap</th><th>r</th><th>Signal</th></tr></thead>
+                <tbody>{peptideCorrelations.map((item) => <tr key={item.metric}><td>{item.label}</td><td>{item.n}</td><td>{Number.isFinite(item.correlation) ? item.correlation.toFixed(2) : '—'}</td><td>{correlationLabel(item.correlation)}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+          {flaggedLabs.length > 0 && <p className="report-note"><strong>Lab watchlist:</strong> {flaggedLabs.slice(0, 5).map((record) => `${record.metric} (${formatRecord(record)}, ${record.status})`).join('; ')}.</p>}
+        </section>
+      )}
 
       <section className="overview-section">
         <div className="section-heading">

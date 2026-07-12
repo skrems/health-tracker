@@ -11,5 +11,7 @@ services:
     environment:
       TZ: "America/Los_Angeles"
       DB_PATH: "/data/health-tracker.sqlite"
+      PEPTIDE_DB_PATH: "/peptide-data/app.db"
     volumes:
       - ./data:/data
+      - /Users/skrems/Projects/peptide-power-assistant/data:/peptide-data:ro
