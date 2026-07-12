@@ -34,6 +34,9 @@ import {
 import './styles.css';
 
 const STORAGE_KEY = 'health-tracker-state-v1';
+const DATA_SOURCES = ['labs', 'dexa', 'scale', 'glucose'];
+const IMPORT_SOURCES = ['labs', 'dexa', 'scale'];
+const GLUCOSE_METRIC = 'Fasting Glucose';
 
 const SOURCE_META = {
   labs: {
@@ -57,12 +60,20 @@ const SOURCE_META = {
     accepted: 'Wyze .xlsx exports or CSV with date,weight_lbs,body_fat_pct,muscle_mass_lbs',
     copy: 'Daily Wyze Body Scan Pro exports.',
   },
+  glucose: {
+    label: 'Morning Glucose',
+    icon: Activity,
+    color: '#b3265e',
+    accepted: 'Manual daily wake-up reading in mg/dL',
+    copy: 'Daily fasting blood sugar taken first thing in the morning.',
+  },
 };
 
 const INITIAL_STATE = {
   labs: [],
   dexa: [],
   scale: [],
+  glucose: [],
 };
 
 const METHOD_COLORS = {
@@ -187,6 +198,12 @@ const OVERVIEW_CARDS = [
     compareMetric: 'Scale Visceral Fat',
   },
   {
+    title: 'Fasting Glucose',
+    sourceLabel: 'Daily morning',
+    source: 'glucose',
+    metric: GLUCOSE_METRIC,
+  },
+  {
     title: 'ApoB',
     sourceLabel: 'Bloodwork',
     source: 'labs',
@@ -291,6 +308,14 @@ function normalizeDate(row) {
 }
 
 function rowHash(record) {
+  if (record.source === 'glucose') {
+    return [
+      record.source,
+      record.date,
+      record.metric,
+      record.unit || '',
+    ].join('|');
+  }
   return [
     record.source,
     record.date,
@@ -627,7 +652,7 @@ function normalizeWarehouseRecord(row) {
     value: parsed.value,
     rawValue: parsed.raw,
     comparator: parsed.comparator,
-    unit: row.unit || '',
+    unit: row.unit || (source === 'glucose' ? 'mg/dL' : ''),
     status: row.status || '',
     referenceRange: row.reference_range || row.referenceRange || row.range || '',
     low: row.low ?? range.low,
@@ -641,6 +666,9 @@ function inferWarehouseSource(row) {
   const explicit = normalizeSource(row.source || row.kind || row.domain || row.category);
   if (explicit) return explicit;
 
+  const metric = normalizeKey(row.metric || row.measurement || row.name || '');
+  if (['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose'].includes(metric)) return 'glucose';
+
   const hasLabMetric = Boolean(row.marker || row.Marker || row.test || row.Test);
   const hasLabValue = row.value !== undefined || row.Value !== undefined || row.result !== undefined || row.Result !== undefined;
   if (hasLabMetric && hasLabValue) return 'labs';
@@ -653,6 +681,7 @@ function normalizeSource(source) {
   if (['bloodwork', 'blood', 'lab', 'labs', 'rhythm'].includes(normalized)) return 'labs';
   if (['dexa', 'dexascan', 'body_spec', 'bodyspec', 'bodycomposition'].includes(normalized)) return 'dexa';
   if (['scale', 'wyze', 'weight', 'body_scan'].includes(normalized)) return 'scale';
+  if (['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose'].includes(normalized)) return 'glucose';
   return SOURCE_META[normalized] ? normalized : null;
 }
 
@@ -736,17 +765,33 @@ function sourceName(source) {
   if (source === 'dexa') return 'DEXA';
   if (source === 'scale') return 'Wyze';
   if (source === 'labs') return 'Lab';
+  if (source === 'glucose') return 'Glucose';
   return source;
+}
+
+function todayDateString() {
+  const today = new Date();
+  const local = new Date(today.getTime() - today.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
 function recordCount(grouped) {
   return Object.values(grouped).reduce((sum, rows) => sum + rows.length, 0);
 }
 
+function ensureRecordGroups(grouped) {
+  return {
+    labs: grouped?.labs || [],
+    dexa: grouped?.dexa || [],
+    scale: grouped?.scale || [],
+    glucose: grouped?.glucose || [],
+  };
+}
+
 function readLocalRecords() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : INITIAL_STATE;
+    return stored ? ensureRecordGroups(JSON.parse(stored)) : INITIAL_STATE;
   } catch {
     return INITIAL_STATE;
   }
@@ -755,7 +800,7 @@ function readLocalRecords() {
 async function fetchApiRecords() {
   const response = await fetch('/api/measurements');
   if (!response.ok) throw new Error('SQLite API is not available.');
-  return response.json();
+  return ensureRecordGroups(await response.json());
 }
 
 async function postImport(source, fileName, records) {
@@ -826,6 +871,8 @@ function App() {
   const [selectedComparison, setSelectedComparison] = useState(COMPARISON_METRICS[1].id);
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
+  const [glucoseDate, setGlucoseDate] = useState(todayDateString());
+  const [glucoseValue, setGlucoseValue] = useState('');
   const fileRefs = {
     labs: useRef(null),
     dexa: useRef(null),
@@ -842,7 +889,7 @@ function App() {
         const localRecords = readLocalRecords();
         if (recordCount(apiRecords) === 0 && recordCount(localRecords) > 0) {
           let latest = apiRecords;
-          for (const source of ['labs', 'dexa', 'scale']) {
+          for (const source of DATA_SOURCES) {
             if (localRecords[source]?.length) {
               const result = await postImport(source, 'localStorage migration', localRecords[source]);
               latest = result.records;
@@ -951,10 +998,38 @@ function App() {
 
     setRecords((current) => ({
       ...current,
-      [source]: dedupeRecords(current[source], normalized),
+      [source]: dedupeRecords(current[source] || [], normalized),
     }));
     setActiveSource(source);
     setMessage(`Imported ${normalized.length} ${SOURCE_META[source].label.toLowerCase()} data points from ${fileName}.`);
+  }
+
+  async function saveGlucoseReading(event) {
+    event.preventDefault();
+    const parsed = parseNumber(glucoseValue);
+    if (!glucoseDate || !parsed) {
+      setMessage('Enter a date and morning glucose value in mg/dL.');
+      return;
+    }
+    if (parsed.value < 20 || parsed.value > 600) {
+      setMessage('Morning glucose should be entered in mg/dL. Check the value before saving.');
+      return;
+    }
+
+    await saveImport('glucose', 'manual morning glucose', [{
+      id: createRecordId(),
+      source: 'glucose',
+      date: glucoseDate,
+      metric: GLUCOSE_METRIC,
+      value: parsed.value,
+      rawValue: parsed.raw,
+      unit: 'mg/dL',
+      importer: 'manual',
+      provider: 'manual',
+      externalId: `morning-glucose-${glucoseDate}`,
+      measuredAt: `${glucoseDate}T00:00:00`,
+    }]);
+    setGlucoseValue('');
   }
 
   function importCsv(source, file) {
@@ -1046,14 +1121,14 @@ function App() {
     const grouped = normalized.reduce((acc, record) => {
       acc[record.source].push(record);
       return acc;
-    }, { labs: [], dexa: [], scale: [] });
+    }, { labs: [], dexa: [], scale: [], glucose: [] });
 
     if (storageMode === 'sqlite') {
       try {
         let latest = records;
         let inserted = 0;
         let duplicates = 0;
-        for (const source of ['labs', 'dexa', 'scale']) {
+        for (const source of DATA_SOURCES) {
           if (grouped[source].length) {
             const result = await postImport(source, fileName, grouped[source]);
             latest = result.records;
@@ -1076,6 +1151,7 @@ function App() {
       labs: dedupeRecords(current.labs, grouped.labs),
       dexa: dedupeRecords(current.dexa, grouped.dexa),
       scale: dedupeRecords(current.scale, grouped.scale),
+      glucose: dedupeRecords(current.glucose || [], grouped.glucose),
     }));
 
     const firstSource = Object.keys(grouped).find((source) => grouped[source].length);
@@ -1117,6 +1193,7 @@ function App() {
     { label: 'Lab markers', value: new Set(records.labs.map((r) => r.metric)).size, icon: FlaskConical },
     { label: 'DEXA metrics', value: new Set(records.dexa.map((r) => r.metric)).size, icon: ScanLine },
     { label: 'Scale readings', value: new Set(records.scale.map((r) => r.date)).size, icon: Scale },
+    { label: 'Glucose readings', value: new Set(records.glucose.map((r) => r.date)).size, icon: Activity },
     { label: 'Flagged labs', value: flaggedLabs.length, icon: Activity },
   ];
   const storageLabel = storageMode === 'sqlite' ? 'SQLite connected' : storageMode === 'browser' ? 'Browser storage' : 'Connecting storage';
@@ -1149,7 +1226,8 @@ function App() {
       </header>
 
       <section className="import-grid">
-        {Object.entries(SOURCE_META).map(([source, meta]) => {
+        {IMPORT_SOURCES.map((source) => {
+          const meta = SOURCE_META[source];
           const Icon = meta.icon;
           return (
             <article className="import-card" key={source} style={{ '--accent': meta.color }}>
@@ -1175,6 +1253,45 @@ function App() {
             </article>
           );
         })}
+      </section>
+
+      <section className="manual-entry">
+        <div>
+          <div className="import-card-header">
+            <Activity size={22} />
+            <div>
+              <h2>Morning Glucose</h2>
+              <p>Record your wake-up fasting blood sugar as a daily mg/dL measurement.</p>
+            </div>
+          </div>
+        </div>
+        <form className="manual-form" onSubmit={saveGlucoseReading}>
+          <label>
+            <span>Date</span>
+            <input
+              type="date"
+              value={glucoseDate}
+              onChange={(event) => setGlucoseDate(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>mg/dL</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="20"
+              max="600"
+              step="0.1"
+              value={glucoseValue}
+              onChange={(event) => setGlucoseValue(event.target.value)}
+              placeholder="95"
+            />
+          </label>
+          <button className="secondary-button glucose-button" type="submit" disabled={importsDisabled}>
+            <Activity size={17} />
+            Save Reading
+          </button>
+        </form>
       </section>
 
       <section className="warehouse-import">

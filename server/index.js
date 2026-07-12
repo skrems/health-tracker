@@ -148,8 +148,8 @@ app.get('/api/import-batches', (_req, res) => {
 
 app.post('/api/import', (req, res) => {
   const { source, fileName = '', records = [] } = req.body || {};
-  if (!['labs', 'dexa', 'scale'].includes(source)) {
-    res.status(400).json({ error: 'source must be labs, dexa, or scale' });
+  if (!['labs', 'dexa', 'scale', 'glucose'].includes(source)) {
+    res.status(400).json({ error: 'source must be labs, dexa, scale, or glucose' });
     return;
   }
   if (!Array.isArray(records)) {
@@ -231,6 +231,20 @@ function normalizeIncomingRecord(record, source, importBatchId) {
 }
 
 function uniqueKey(record) {
+  if (record.source === 'glucose') {
+    return crypto
+      .createHash('sha256')
+      .update([
+        record.source,
+        record.provider,
+        record.externalId,
+        record.date,
+        record.metric,
+        record.unit,
+      ].join('|'))
+      .digest('hex');
+  }
+
   return crypto
     .createHash('sha256')
     .update([
@@ -270,7 +284,8 @@ function cleanRecord(record) {
 
 function groupBySource(rows) {
   return rows.reduce((acc, row) => {
+    if (!acc[row.source]) acc[row.source] = [];
     acc[row.source].push(row);
     return acc;
-  }, { labs: [], dexa: [], scale: [] });
+  }, { labs: [], dexa: [], scale: [], glucose: [] });
 }

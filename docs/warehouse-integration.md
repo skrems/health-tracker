@@ -42,6 +42,7 @@ source,date,metric,value,unit,status,reference_range,importer
 bodyspec,2026-07-06,Lean Mass,164.2,lb,,,
 wyze,2026-07-06,Weight,201.1,lb,,,
 rhythm,2026-07-06,ApoB,71.5,mg/dL,optimal,0 - 90,rhythm
+glucose,2026-07-06,Fasting Glucose,95,mg/dL,,,manual
 ```
 
 ## Source Mapping
@@ -51,6 +52,7 @@ The dashboard maps these source values:
 - `bloodwork`, `blood`, `lab`, `labs`, `rhythm` -> Bloodwork
 - `dexa`, `dexascan`, `body_spec`, `bodyspec`, `bodycomposition` -> DEXA
 - `scale`, `wyze`, `weight`, `body_scan` -> Scale
+- `glucose`, `blood_glucose`, `blood_sugar`, `fasting_glucose`, `morning_glucose` -> Morning Glucose
 
 Unknown sources are skipped so experimental importers will not break the dashboard.
 

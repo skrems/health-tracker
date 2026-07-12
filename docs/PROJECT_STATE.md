@@ -8,7 +8,7 @@ Last check-in: 2026-07-09
 - ZimaOS Docker deployment works.
 - ZimaOS app can import data successfully.
 - SQLite-backed persistence is active.
-- Current container image: `ghcr.io/skrems/health-tracker:v1.0.2`.
+- Current container image: `ghcr.io/skrems/health-tracker:v1.1.0`.
 - ZimaOS SQLite database path: `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Import Status
@@ -16,6 +16,7 @@ Last check-in: 2026-07-09
 - Rhythm bloodwork CSV imports work.
 - BodySpec DEXA CSV imports work.
 - Wyze scale XLSX imports work.
+- Morning glucose manual entries work.
 - Duplicate measurements are skipped by SQLite unique keys during import.
 
 ## Current Architecture
@@ -30,6 +31,7 @@ Last check-in: 2026-07-09
 
 - `v1.0.1`: made silent/zero-row Rhythm-style imports visible and inferred labs for raw Rhythm rows in warehouse imports.
 - `v1.0.2`: replaced direct frontend `crypto.randomUUID()` usage with a browser-safe ID helper so imports work in ZimaOS/browser contexts without `randomUUID`.
+- `v1.1.0`: added daily manual wake-up fasting glucose tracking in mg/dL.
 
 ## Next Useful Work
 

@@ -2,7 +2,7 @@ name: health-tracker
 
 services:
   health-tracker:
-    image: ghcr.io/skrems/health-tracker:v1.0.2
+    image: ghcr.io/skrems/health-tracker:v1.1.0
     container_name: health-tracker
     restart: unless-stopped
     ports:
