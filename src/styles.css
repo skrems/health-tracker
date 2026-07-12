@@ -39,6 +39,71 @@ button:disabled {
   padding: 28px 0 44px;
 }
 
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  display: grid;
+  width: min(100%, 440px);
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid #d8e0e9;
+  border-top: 4px solid #246bfe;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgb(23 38 62 / 10%);
+}
+
+.login-panel h1 {
+  font-size: 2.35rem;
+}
+
+.login-panel > p:not(.eyebrow),
+.login-panel small {
+  margin: 0;
+  color: #607086;
+}
+
+.login-panel form {
+  display: grid;
+  gap: 13px;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 5px;
+}
+
+.login-panel label span {
+  color: #607086;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.login-panel input {
+  min-height: 44px;
+  padding: 0 11px;
+  border: 1px solid #cbd6e2;
+  border-radius: 8px;
+  color: #172234;
+  background: #fff;
+}
+
+.login-error {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #efc9c9;
+  border-radius: 8px;
+  color: #9d2f2f;
+  background: #fff5f5;
+  font-size: 0.9rem;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -493,7 +558,7 @@ h2 {
 
 .peptide-controls {
   display: grid;
-  grid-template-columns: minmax(210px, 300px) 1fr auto;
+  grid-template-columns: 1fr auto;
   gap: 14px;
   align-items: end;
 }
@@ -1033,7 +1098,6 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .peptide-controls,
   .report-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

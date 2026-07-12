@@ -59,11 +59,11 @@ The Health Overview section provides a single pane across bloodwork, DEXA, and W
 
 ## Peptide Connection And Report
 
-When deployed to the ZimaBoard, Health Tracker mounts the Peptide Power Assistant data directory read-only. Select the matching peptide profile in the dashboard to include completed dose logs in the combined Health and Peptide Report.
+When deployed to the ZimaBoard, Health Tracker mounts the Peptide Power Assistant data directory read-only. Sign in with your Peptide Power Assistant email and password; Health Tracker verifies those credentials against the existing account and automatically matches its peptide profile.
 
 The report is available on screen and can be printed or saved as a PDF from the browser. It includes health snapshots, body and glucose trends, peptide-use totals, and exploratory correlations between each metric and injection-day frequency over the preceding seven days. These associations do not establish medical causation.
 
-The two apps retain separate SQLite databases. Health Tracker never writes to the peptide database.
+The two apps retain separate SQLite databases. Health Tracker never writes to the peptide database and never stores the Peptide Power password. The ZimaOS configuration restricts the current Health Tracker instance to `skrems@gmail.com` through `HEALTH_ALLOWED_EMAILS`.
 
 ## Method Comparison
 

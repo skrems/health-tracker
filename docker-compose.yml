@@ -12,6 +12,7 @@ services:
       TZ: "America/Los_Angeles"
       DB_PATH: "/data/health-tracker.sqlite"
       PEPTIDE_DB_PATH: "/peptide-data/app.db"
+      HEALTH_ALLOWED_EMAILS: "skrems@gmail.com"
     volumes:
       - ./data:/data
       - /Users/skrems/Projects/peptide-power-assistant/data:/peptide-data:ro

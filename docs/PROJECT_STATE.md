@@ -8,7 +8,7 @@ Last check-in: 2026-07-12
 - ZimaOS Docker deployment works.
 - ZimaOS app can import data successfully.
 - SQLite-backed persistence is active.
-- Current container image: `ghcr.io/skrems/health-tracker:v1.2.0`.
+- Current container image: `ghcr.io/skrems/health-tracker:v1.3.0`.
 - ZimaOS SQLite database path: `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Import Status
@@ -18,14 +18,14 @@ Last check-in: 2026-07-12
 - Wyze scale XLSX imports work.
 - Morning glucose manual entries work.
 - Duplicate measurements are skipped by SQLite unique keys during import.
-- Peptide Power Assistant data can be read from its separate SQLite database without duplicating or modifying dose records.
+- Health Tracker login verifies the existing Peptide Power Assistant account and automatically matches its peptide profile without duplicating or modifying dose records.
 
 ## Current Architecture
 
 - React/Vite frontend for upload, charting, overlays, trends, overview panels, and printable combined reports.
 - Express API for import and measurement retrieval.
 - SQLite storage via `better-sqlite3`.
-- Optional read-only peptide SQLite connection through `PEPTIDE_DB_PATH`; on ZimaOS this is `/DATA/AppData/peptide-power-assistant/data/app.db` mounted at `/peptide-data/app.db`.
+- Optional read-only peptide SQLite connection through `PEPTIDE_DB_PATH`; on ZimaOS this is `/DATA/AppData/peptide-power-assistant/data/app.db` mounted at `/peptide-data/app.db`. `HEALTH_ALLOWED_EMAILS` limits Health Tracker access to approved Peptide Power account emails.
 - Docker image published through GitHub Actions to GHCR.
 - ZimaOS compose file pins explicit image tags instead of relying on `latest`.
 
@@ -35,6 +35,7 @@ Last check-in: 2026-07-12
 - `v1.0.2`: replaced direct frontend `crypto.randomUUID()` usage with a browser-safe ID helper so imports work in ZimaOS/browser contexts without `randomUUID`.
 - `v1.1.0`: added daily manual wake-up fasting glucose tracking in mg/dL.
 - `v1.2.0`: added read-only peptide-dose integration, selected-person reporting, exploratory peptide/health correlations, printable reports, and visible app versioning.
+- `v1.3.0`: added Peptide Power-backed login, owner email access control, and automatic peptide-profile matching.
 
 ## Next Useful Work
 

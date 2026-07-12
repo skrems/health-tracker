@@ -12,6 +12,14 @@ const apiOnly = process.argv.includes('--api-only');
 const port = Number(process.env.PORT || process.env.APP_PORT || (apiOnly ? 3001 : 8080));
 const dbPath = process.env.DB_PATH || path.join(projectRoot, 'data', 'health-tracker.sqlite');
 const peptideDbPath = process.env.PEPTIDE_DB_PATH || '';
+const allowedHealthEmails = new Set(
+  String(process.env.HEALTH_ALLOWED_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
+const sessionLifetimeMs = 1000 * 60 * 60 * 12;
+const sessions = new Map();
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -135,37 +143,65 @@ const app = express();
 app.use(express.json({ limit: '25mb' }));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, dbPath, peptideIntegrationConfigured: Boolean(peptideDbPath) });
+  res.json({ ok: true, peptideIntegrationConfigured: Boolean(peptideDbPath) });
 });
 
-app.get('/api/peptides/users', (_req, res) => {
+app.get('/api/auth/session', (req, res) => {
+  const user = sessionUser(req);
+  res.json({ authenticated: Boolean(user), user: user || null });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!email || !password) {
+    res.status(400).json({ error: 'Email and password are required.' });
+    return;
+  }
+  if (allowedHealthEmails.size && !allowedHealthEmails.has(email)) {
+    res.status(403).json({ error: 'This account is not allowed to access Health Tracker.' });
+    return;
+  }
+
   const peptideDb = openPeptideDb();
   if (!peptideDb) {
-    res.json({ connected: false, users: [], reason: 'Peptide SQLite database is not configured.' });
+    res.status(503).json({ error: 'Peptide account data is not configured on this Health Tracker server.' });
     return;
   }
 
   try {
-    const users = peptideDb.prepare(`
-      SELECT id, display_name AS displayName
+    const user = peptideDb.prepare(`
+      SELECT id, email, display_name AS displayName, password_hash AS passwordHash
       FROM users
-      WHERE active = 1
-      ORDER BY display_name COLLATE NOCASE
-    `).all();
-    res.json({ connected: true, users });
+      WHERE email = ? AND active = 1
+    `).get(email);
+    if (!user || !verifyPeptidePassword(password, user.passwordHash)) {
+      res.status(401).json({ error: 'Invalid email or password.' });
+      return;
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    const session = { id: user.id, email: user.email, displayName: user.displayName, expiresAt: Date.now() + sessionLifetimeMs };
+    sessions.set(token, session);
+    setSessionCookie(res, token);
+    res.json({ authenticated: true, user: publicUser(session) });
   } catch (error) {
-    res.json({ connected: false, users: [], reason: `Could not read peptide data: ${error.message}` });
+    res.status(500).json({ error: `Could not verify the peptide account: ${error.message}` });
   } finally {
     peptideDb.close();
   }
 });
 
+app.post('/api/auth/logout', (req, res) => {
+  const token = readCookies(req).health_tracker_session;
+  if (token) sessions.delete(token);
+  clearSessionCookie(res);
+  res.json({ authenticated: false });
+});
+
+app.use('/api', requireAuthenticatedUser);
+
 app.get('/api/peptides/doses', (req, res) => {
-  const userId = Number(req.query.userId);
-  if (!Number.isInteger(userId) || userId < 1) {
-    res.status(400).json({ error: 'A peptide userId is required.' });
-    return;
-  }
+  const userId = req.healthUser.id;
 
   const peptideDb = openPeptideDb();
   if (!peptideDb) {
@@ -174,15 +210,6 @@ app.get('/api/peptides/doses', (req, res) => {
   }
 
   try {
-    const user = peptideDb.prepare(`
-      SELECT id, display_name AS displayName
-      FROM users
-      WHERE id = ? AND active = 1
-    `).get(userId);
-    if (!user) {
-      res.status(404).json({ error: 'Selected peptide user was not found.' });
-      return;
-    }
     const doses = peptideDb.prepare(`
       SELECT
         id,
@@ -198,7 +225,7 @@ app.get('/api/peptides/doses', (req, res) => {
       WHERE user_id = ?
       ORDER BY logged_at ASC, id ASC
     `).all(userId);
-    res.json({ connected: true, user, doses });
+    res.json({ connected: true, user: publicUser(req.healthUser), doses });
   } catch (error) {
     res.status(500).json({ error: `Could not read peptide doses: ${error.message}` });
   } finally {
@@ -349,6 +376,61 @@ function cleanRecord(record) {
     measuredAt: record.measuredAt || undefined,
     provider: record.provider || undefined,
   };
+}
+
+function readCookies(req) {
+  return String(req.headers.cookie || '')
+    .split(';')
+    .reduce((cookies, entry) => {
+      const [name, ...value] = entry.trim().split('=');
+      if (name) cookies[name] = decodeURIComponent(value.join('='));
+      return cookies;
+    }, {});
+}
+
+function sessionUser(req) {
+  const token = readCookies(req).health_tracker_session;
+  const session = token ? sessions.get(token) : null;
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function requireAuthenticatedUser(req, res, next) {
+  const user = sessionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Sign in is required.' });
+    return;
+  }
+  req.healthUser = user;
+  next();
+}
+
+function verifyPeptidePassword(password, storedHash) {
+  try {
+    const [iterationsText, salt, expected] = String(storedHash).split('$', 3);
+    const iterations = Number(iterationsText);
+    if (!Number.isInteger(iterations) || !salt || !/^[a-f0-9]+$/i.test(expected || '')) return false;
+    const actual = crypto.pbkdf2Sync(password, salt, iterations, 32, 'sha256').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+function publicUser(user) {
+  return { id: user.id, email: user.email, displayName: user.displayName };
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `health_tracker_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(sessionLifetimeMs / 1000)}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', 'health_tracker_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
 }
 
 function openPeptideDb() {

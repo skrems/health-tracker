@@ -15,6 +15,7 @@ import {
   FileText,
   Layers3,
   LineChart as LineChartIcon,
+  LogOut,
   Printer,
   RotateCcw,
   Scale,
@@ -41,7 +42,6 @@ const DATA_SOURCES = ['labs', 'dexa', 'scale', 'glucose'];
 const IMPORT_SOURCES = ['labs', 'dexa', 'scale'];
 const GLUCOSE_METRIC = 'Fasting Glucose';
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'development';
-const PEPTIDE_USER_STORAGE_KEY = 'health-tracker-peptide-user-id';
 
 const SOURCE_META = {
   labs: {
@@ -827,14 +827,29 @@ async function clearApiRecords() {
   return response.json();
 }
 
-async function fetchPeptideUsers() {
-  const response = await fetch('/api/peptides/users');
-  if (!response.ok) throw new Error('Could not connect to peptide data.');
+async function fetchSession() {
+  const response = await fetch('/api/auth/session');
+  if (!response.ok) throw new Error('Could not check your session.');
   return response.json();
 }
 
-async function fetchPeptideDoses(userId) {
-  const response = await fetch(`/api/peptides/doses?userId=${encodeURIComponent(userId)}`);
+async function signIn(email, password) {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || 'Could not sign in.');
+  return body;
+}
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+}
+
+async function fetchPeptideDoses() {
+  const response = await fetch('/api/peptides/doses');
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error || 'Could not load peptide doses.');
@@ -962,6 +977,9 @@ function correlationLabel(value) {
 
 function App() {
   const [records, setRecords] = useState(INITIAL_STATE);
+  const [authStatus, setAuthStatus] = useState('loading');
+  const [authUser, setAuthUser] = useState(null);
+  const [loginError, setLoginError] = useState('');
   const [storageMode, setStorageMode] = useState('loading');
   const [activeSource, setActiveSource] = useState('labs');
   const [selectedMetric, setSelectedMetric] = useState('');
@@ -971,8 +989,6 @@ function App() {
   const [glucoseDate, setGlucoseDate] = useState(todayDateString());
   const [glucoseValue, setGlucoseValue] = useState('');
   const [peptideConnection, setPeptideConnection] = useState('loading');
-  const [peptideUsers, setPeptideUsers] = useState([]);
-  const [selectedPeptideUserId, setSelectedPeptideUserId] = useState(() => localStorage.getItem(PEPTIDE_USER_STORAGE_KEY) || '');
   const [peptideData, setPeptideData] = useState({ user: null, doses: [] });
   const [peptideError, setPeptideError] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
@@ -984,6 +1000,23 @@ function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    fetchSession()
+      .then((result) => {
+        if (cancelled) return;
+        setAuthUser(result.user || null);
+        setAuthStatus(result.authenticated ? 'authenticated' : 'anonymous');
+      })
+      .catch(() => {
+        if (!cancelled) setAuthStatus('anonymous');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return undefined;
     let cancelled = false;
     async function loadRecords() {
       try {
@@ -1018,35 +1051,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authStatus]);
 
   useEffect(() => {
-    let cancelled = false;
-    fetchPeptideUsers()
-      .then((result) => {
-        if (cancelled) return;
-        setPeptideConnection(result.connected ? 'connected' : 'unavailable');
-        setPeptideUsers(result.users || []);
-        setPeptideError(result.reason || '');
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setPeptideConnection('unavailable');
-        setPeptideError(error.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectedPeptideUserId) {
-      setPeptideData({ user: null, doses: [] });
-      return undefined;
-    }
+    if (authStatus !== 'authenticated') return undefined;
     let cancelled = false;
     setPeptideConnection('loading-doses');
-    fetchPeptideDoses(selectedPeptideUserId)
+    fetchPeptideDoses()
       .then((result) => {
         if (cancelled) return;
         setPeptideData({ user: result.user, doses: result.doses || [] });
@@ -1055,19 +1066,13 @@ function App() {
       })
       .catch((error) => {
         if (cancelled) return;
-        setPeptideData({ user: null, doses: [] });
         setPeptideConnection('unavailable');
         setPeptideError(error.message);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedPeptideUserId]);
-
-  useEffect(() => {
-    if (selectedPeptideUserId) localStorage.setItem(PEPTIDE_USER_STORAGE_KEY, selectedPeptideUserId);
-    else localStorage.removeItem(PEPTIDE_USER_STORAGE_KEY);
-  }, [selectedPeptideUserId]);
+  }, [authStatus]);
 
   useEffect(() => {
     if (storageMode === 'browser') {
@@ -1344,6 +1349,28 @@ function App() {
     }
   }
 
+  async function handleLogin(email, password) {
+    setLoginError('');
+    try {
+      const result = await signIn(email, password);
+      setAuthUser(result.user);
+      setAuthStatus('authenticated');
+    } catch (error) {
+      setLoginError(error.message);
+      throw error;
+    }
+  }
+
+  async function handleLogout() {
+    await signOut();
+    setAuthUser(null);
+    setAuthStatus('anonymous');
+    setRecords(INITIAL_STATE);
+    setPeptideData({ user: null, doses: [] });
+    setPeptideConnection('loading');
+    setReportOpen(false);
+  }
+
   const statTiles = [
     { label: 'Lab markers', value: new Set(records.labs.map((r) => r.metric)).size, icon: FlaskConical },
     { label: 'DEXA metrics', value: new Set(records.dexa.map((r) => r.metric)).size, icon: ScanLine },
@@ -1358,6 +1385,10 @@ function App() {
       ? 'SQLite API is unavailable, so imports are stored in this browser.'
       : 'Checking the SQLite API before imports are enabled.';
   const importsDisabled = storageMode === 'loading';
+
+  if (authStatus !== 'authenticated') {
+    return <LoginScreen loading={authStatus === 'loading'} error={loginError} onLogin={handleLogin} />;
+  }
 
   return (
     <main className="app-shell">
@@ -1381,6 +1412,9 @@ function App() {
           </button>
           <button className="icon-button danger" onClick={resetData} title="Clear imported data">
             <RotateCcw size={18} />
+          </button>
+          <button className="icon-button" onClick={handleLogout} title={`Sign out ${authUser?.email || ''}`}>
+            <LogOut size={18} />
           </button>
         </div>
       </header>
@@ -1505,21 +1539,10 @@ function App() {
           </span>
         </div>
         <div className="peptide-controls">
-          <label>
-            <span>Person</span>
-            <select
-              value={selectedPeptideUserId}
-              onChange={(event) => setSelectedPeptideUserId(event.target.value)}
-              disabled={peptideConnection === 'unavailable'}
-            >
-              <option value="">Select peptide profile</option>
-              {peptideUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
-            </select>
-          </label>
           <div className="peptide-connection-copy">
             {peptideData.user
-              ? `${completedPeptideDoses.length} completed doses across ${new Set(completedPeptideDoses.map((dose) => dose.date)).size} injection day${new Set(completedPeptideDoses.map((dose) => dose.date)).size === 1 ? '' : 's'}.`
-              : peptideError || 'Choose the peptide profile that belongs with this health dataset.'}
+              ? `${peptideData.user.displayName} is matched from ${peptideData.user.email}. ${completedPeptideDoses.length} completed doses across ${new Set(completedPeptideDoses.map((dose) => dose.date)).size} injection day${new Set(completedPeptideDoses.map((dose) => dose.date)).size === 1 ? '' : 's'}.`
+              : peptideError || 'Matching the signed-in Peptide Power profile.'}
           </div>
           <button className="secondary-button report-button" onClick={() => setReportOpen(true)} disabled={!peptideData.user}>
             <FileText size={17} />
@@ -1565,7 +1588,7 @@ function App() {
                   <thead><tr><th>Peptide</th><th>Doses</th><th>Active days</th><th>Total</th></tr></thead>
                   <tbody>{peptideTotals.map((item) => <tr key={`${item.peptideName}-${item.doseUnit}`}><td>{item.peptideName}</td><td>{item.doses}</td><td>{item.activeDays}</td><td>{formatValue(item.total)} {item.doseUnit}</td></tr>)}</tbody>
                 </table>
-              ) : <p className="empty">Select a peptide profile to include its dosing history.</p>}
+              ) : <p className="empty">The matching peptide profile is not available.</p>}
             </div>
             <div>
               <h3>Health Associations</h3>
@@ -1845,6 +1868,50 @@ function App() {
           ))}
           {!flaggedLabs.length && <p className="empty">No flagged labs imported yet.</p>}
         </div>
+      </section>
+    </main>
+  );
+}
+
+function LoginScreen({ loading, error, onLogin }) {
+  const [email, setEmail] = useState('skrems@gmail.com');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      await onLogin(email, password);
+    } catch {
+      setPassword('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel">
+        <p className="eyebrow">Private health dashboard</p>
+        <h1>Health Tracker</h1>
+        <p>Sign in with your Peptide Power Assistant account to open your health data and matching peptide profile.</p>
+        <form onSubmit={submit}>
+          <label>
+            <span>Email</span>
+            <input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} disabled={loading || submitting} required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={loading || submitting} required />
+          </label>
+          {error && <p className="login-error">{error}</p>}
+          <button className="primary-button" type="submit" disabled={loading || submitting}>
+            {loading ? 'Checking session' : submitting ? 'Signing in' : 'Sign in'}
+          </button>
+        </form>
+        <small>Health Tracker verifies your credentials against Peptide Power Assistant and does not store your password.</small>
+        <span className="version-pill">{APP_VERSION}</span>
       </section>
     </main>
   );
