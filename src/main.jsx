@@ -43,6 +43,10 @@ const IMPORT_SOURCES = ['labs', 'dexa', 'scale'];
 const FASTING_GLUCOSE_METRIC = 'Fasting Glucose';
 const BEDTIME_GLUCOSE_METRIC = 'Bedtime Glucose';
 const GLUCOSE_SOURCE_ALIASES = ['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose', 'bedtime_glucose', 'evening_glucose'];
+const GLUCOSE_SERIES = [
+  { key: 'fasting', source: 'glucose', metric: FASTING_GLUCOSE_METRIC, label: 'Fasting', color: '#b3265e' },
+  { key: 'bedtime', source: 'glucose', metric: BEDTIME_GLUCOSE_METRIC, label: 'Bedtime', color: '#246bfe' },
+];
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'development';
 
 const SOURCE_META = {
@@ -1111,6 +1115,8 @@ function App() {
   }, [activeRecords, selectedMetric]);
 
   const trend = summarizeTrend(selectedRecords);
+  const isGlucoseOverlay = activeSource === 'glucose';
+  const glucoseOverlayData = useMemo(() => buildComparisonData(records, { series: GLUCOSE_SERIES }), [records]);
   const comparisonConfig = COMPARISON_METRICS.find((metric) => metric.id === selectedComparison) || COMPARISON_METRICS[0];
   const comparisonData = useMemo(() => {
     return buildComparisonData(records, comparisonConfig);
@@ -1818,8 +1824,15 @@ function App() {
           <div className="chart-heading">
             <div>
               <p className="eyebrow">{SOURCE_META[activeSource].label}</p>
-              <h2>{selectedMetric || 'No metric selected'}</h2>
+              <h2>{isGlucoseOverlay ? 'Fasting and Bedtime Glucose' : selectedMetric || 'No metric selected'}</h2>
             </div>
+            {isGlucoseOverlay && (
+              <div className="method-legend">
+                {GLUCOSE_SERIES.map((series) => (
+                  <span key={series.key}><i style={{ background: series.color }} />{series.label}</span>
+                ))}
+              </div>
+            )}
             {trend && (
               <div className={`trend-pill ${trend.direction}`}>
                 {trend.direction === 'down' ? <TrendingDown size={16} /> : <TrendingUp size={16} />}
@@ -1829,20 +1842,22 @@ function App() {
           </div>
 
           <div className="chart-frame">
-            {selectedRecords.length ? (
+            {(isGlucoseOverlay ? glucoseOverlayData.length : selectedRecords.length) ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={selectedRecords} margin={{ top: 18, right: 26, bottom: 8, left: 8 }}>
+                <LineChart data={isGlucoseOverlay ? glucoseOverlayData : selectedRecords} margin={{ top: 18, right: 26, bottom: 8, left: 8 }}>
                   <CartesianGrid stroke="#d9e0e8" strokeDasharray="4 4" />
                   <XAxis dataKey="date" stroke="#5f6f82" tickMargin={10} />
                   <YAxis stroke="#5f6f82" width={48} domain={['auto', 'auto']} />
-                  <Tooltip content={<ChartTooltip />} />
-                  {selectedRecords[0]?.low !== undefined && (
+                  <Tooltip content={isGlucoseOverlay ? <GlucoseTooltip /> : <ChartTooltip />} />
+                  {!isGlucoseOverlay && selectedRecords[0]?.low !== undefined && (
                     <Line dataKey="low" stroke="#a9b4c1" dot={false} strokeDasharray="5 5" />
                   )}
-                  {selectedRecords[0]?.high !== undefined && (
+                  {!isGlucoseOverlay && selectedRecords[0]?.high !== undefined && (
                     <Line dataKey="high" stroke="#a9b4c1" dot={false} strokeDasharray="5 5" />
                   )}
-                  <Line type="monotone" dataKey="value" stroke={SOURCE_META[activeSource].color} strokeWidth={3} dot={{ r: 4 }} />
+                  {isGlucoseOverlay ? GLUCOSE_SERIES.map((series) => (
+                    <Line key={series.key} type="monotone" dataKey={series.key} name={series.label} stroke={series.color} strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                  )) : <Line type="monotone" dataKey="value" stroke={SOURCE_META[activeSource].color} strokeWidth={3} dot={{ r: 4 }} />}
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -1972,6 +1987,18 @@ function ChartTooltip({ active, payload, label }) {
     <div className="tooltip">
       <strong>{label}</strong>
       <span>{value?.payload.rawValue || value?.value} {value?.payload.unit}</span>
+    </div>
+  );
+}
+
+function GlucoseTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="tooltip">
+      <strong>{label}</strong>
+      {payload
+        .filter((item) => item.value !== undefined && item.value !== null)
+        .map((item) => <span key={item.dataKey} style={{ color: item.color }}>{item.name}: {formatValue(item.value)} mg/dL</span>)}
     </div>
   );
 }

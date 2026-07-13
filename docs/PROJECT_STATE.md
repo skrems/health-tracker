@@ -8,7 +8,7 @@ Last check-in: 2026-07-12
 - ZimaOS Docker deployment works.
 - ZimaOS app can import data successfully.
 - SQLite-backed persistence is active.
-- Current container image: `ghcr.io/skrems/health-tracker:v1.4.0`.
+- Current container image: `ghcr.io/skrems/health-tracker:v1.4.1`.
 - ZimaOS SQLite database path: `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Import Status
@@ -37,6 +37,7 @@ Last check-in: 2026-07-12
 - `v1.2.0`: added read-only peptide-dose integration, selected-person reporting, exploratory peptide/health correlations, printable reports, and visible app versioning.
 - `v1.3.0`: added Peptide Power-backed login, owner email access control, and automatic peptide-profile matching.
 - `v1.4.0`: added distinct manual bedtime glucose readings alongside wake-up fasting readings.
+- `v1.4.1`: added a shared fasting-versus-bedtime glucose overlay chart.
 
 ## Next Useful Work
 
