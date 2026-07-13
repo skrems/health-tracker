@@ -53,6 +53,8 @@ date,weight_lbs,body_fat_pct,muscle_mass_lbs,lean_body_mass_lbs,water_pct,bone_m
 
 When running through the Node server or Docker container, imported data is stored in SQLite. Local development uses `data/health-tracker.sqlite`; ZimaOS uses `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
+Daily glucose is entered directly in the dashboard. Fasting and bedtime readings are stored as separate `Fasting Glucose` and `Bedtime Glucose` metrics, so each can be charted and analyzed independently.
+
 ## Health Overview
 
 The Health Overview section provides a single pane across bloodwork, DEXA, and Wyze data. It surfaces the latest values for body composition, cardiometabolic labs, inflammation, nutrients, and hormones, while showing paired DEXA/Wyze values where both methods exist.

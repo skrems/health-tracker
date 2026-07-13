@@ -8,7 +8,7 @@ Last check-in: 2026-07-12
 - ZimaOS Docker deployment works.
 - ZimaOS app can import data successfully.
 - SQLite-backed persistence is active.
-- Current container image: `ghcr.io/skrems/health-tracker:v1.3.0`.
+- Current container image: `ghcr.io/skrems/health-tracker:v1.4.0`.
 - ZimaOS SQLite database path: `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Import Status
@@ -16,7 +16,7 @@ Last check-in: 2026-07-12
 - Rhythm bloodwork CSV imports work.
 - BodySpec DEXA CSV imports work.
 - Wyze scale XLSX imports work.
-- Morning glucose manual entries work.
+- Fasting and bedtime glucose manual entries work.
 - Duplicate measurements are skipped by SQLite unique keys during import.
 - Health Tracker login verifies the existing Peptide Power Assistant account and automatically matches its peptide profile without duplicating or modifying dose records.
 
@@ -36,6 +36,7 @@ Last check-in: 2026-07-12
 - `v1.1.0`: added daily manual wake-up fasting glucose tracking in mg/dL.
 - `v1.2.0`: added read-only peptide-dose integration, selected-person reporting, exploratory peptide/health correlations, printable reports, and visible app versioning.
 - `v1.3.0`: added Peptide Power-backed login, owner email access control, and automatic peptide-profile matching.
+- `v1.4.0`: added distinct manual bedtime glucose readings alongside wake-up fasting readings.
 
 ## Next Useful Work
 

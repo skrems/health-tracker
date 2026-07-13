@@ -40,7 +40,9 @@ import './styles.css';
 const STORAGE_KEY = 'health-tracker-state-v1';
 const DATA_SOURCES = ['labs', 'dexa', 'scale', 'glucose'];
 const IMPORT_SOURCES = ['labs', 'dexa', 'scale'];
-const GLUCOSE_METRIC = 'Fasting Glucose';
+const FASTING_GLUCOSE_METRIC = 'Fasting Glucose';
+const BEDTIME_GLUCOSE_METRIC = 'Bedtime Glucose';
+const GLUCOSE_SOURCE_ALIASES = ['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose', 'bedtime_glucose', 'evening_glucose'];
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'development';
 
 const SOURCE_META = {
@@ -66,11 +68,11 @@ const SOURCE_META = {
     copy: 'Daily Wyze Body Scan Pro exports.',
   },
   glucose: {
-    label: 'Morning Glucose',
+    label: 'Daily Glucose',
     icon: Activity,
     color: '#b3265e',
-    accepted: 'Manual daily wake-up reading in mg/dL',
-    copy: 'Daily fasting blood sugar taken first thing in the morning.',
+    accepted: 'Manual fasting and bedtime readings in mg/dL',
+    copy: 'Daily wake-up fasting and bedtime blood sugar readings.',
   },
 };
 
@@ -206,7 +208,13 @@ const OVERVIEW_CARDS = [
     title: 'Fasting Glucose',
     sourceLabel: 'Daily morning',
     source: 'glucose',
-    metric: GLUCOSE_METRIC,
+    metric: FASTING_GLUCOSE_METRIC,
+  },
+  {
+    title: 'Bedtime Glucose',
+    sourceLabel: 'Daily evening',
+    source: 'glucose',
+    metric: BEDTIME_GLUCOSE_METRIC,
   },
   {
     title: 'ApoB',
@@ -672,7 +680,7 @@ function inferWarehouseSource(row) {
   if (explicit) return explicit;
 
   const metric = normalizeKey(row.metric || row.measurement || row.name || '');
-  if (['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose'].includes(metric)) return 'glucose';
+  if (GLUCOSE_SOURCE_ALIASES.includes(metric)) return 'glucose';
 
   const hasLabMetric = Boolean(row.marker || row.Marker || row.test || row.Test);
   const hasLabValue = row.value !== undefined || row.Value !== undefined || row.result !== undefined || row.Result !== undefined;
@@ -686,7 +694,7 @@ function normalizeSource(source) {
   if (['bloodwork', 'blood', 'lab', 'labs', 'rhythm'].includes(normalized)) return 'labs';
   if (['dexa', 'dexascan', 'body_spec', 'bodyspec', 'bodycomposition'].includes(normalized)) return 'dexa';
   if (['scale', 'wyze', 'weight', 'body_scan'].includes(normalized)) return 'scale';
-  if (['glucose', 'blood_glucose', 'blood_sugar', 'fasting_glucose', 'morning_glucose'].includes(normalized)) return 'glucose';
+  if (GLUCOSE_SOURCE_ALIASES.includes(normalized)) return 'glucose';
   return SOURCE_META[normalized] ? normalized : null;
 }
 
@@ -954,7 +962,8 @@ function peptideHealthCorrelations(records, doses) {
     { label: 'Weight', source: 'scale', metric: 'Weight', unit: 'lb' },
     { label: 'Body Fat', source: 'scale', metric: 'Scale Body Fat %', unit: '%' },
     { label: 'Lean Body Mass', source: 'scale', metric: 'Lean Body Mass', unit: 'lb' },
-    { label: 'Morning Glucose', source: 'glucose', metric: GLUCOSE_METRIC, unit: 'mg/dL' },
+    { label: 'Fasting Glucose', source: 'glucose', metric: FASTING_GLUCOSE_METRIC, unit: 'mg/dL' },
+    { label: 'Bedtime Glucose', source: 'glucose', metric: BEDTIME_GLUCOSE_METRIC, unit: 'mg/dL' },
   ];
   return metrics.map((metric) => {
     const points = dailyAverages(recordsForSeries(records, metric)).map((point) => {
@@ -987,7 +996,8 @@ function App() {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [glucoseDate, setGlucoseDate] = useState(todayDateString());
-  const [glucoseValue, setGlucoseValue] = useState('');
+  const [fastingGlucoseValue, setFastingGlucoseValue] = useState('');
+  const [bedtimeGlucoseValue, setBedtimeGlucoseValue] = useState('');
   const [peptideConnection, setPeptideConnection] = useState('loading');
   const [peptideData, setPeptideData] = useState({ user: null, doses: [] });
   const [peptideError, setPeptideError] = useState('');
@@ -1164,32 +1174,48 @@ function App() {
     setMessage(`Imported ${normalized.length} ${SOURCE_META[source].label.toLowerCase()} data points from ${fileName}.`);
   }
 
-  async function saveGlucoseReading(event) {
+  async function saveGlucoseReadings(event) {
     event.preventDefault();
-    const parsed = parseNumber(glucoseValue);
-    if (!glucoseDate || !parsed) {
-      setMessage('Enter a date and morning glucose value in mg/dL.');
+    const fasting = parseNumber(fastingGlucoseValue);
+    const bedtime = parseNumber(bedtimeGlucoseValue);
+    const readings = [
+      fasting && {
+        metric: FASTING_GLUCOSE_METRIC,
+        parsed: fasting,
+        externalId: `morning-glucose-${glucoseDate}`,
+        measuredAt: `${glucoseDate}T00:00:00`,
+      },
+      bedtime && {
+        metric: BEDTIME_GLUCOSE_METRIC,
+        parsed: bedtime,
+        externalId: `bedtime-glucose-${glucoseDate}`,
+        measuredAt: `${glucoseDate}T23:59:00`,
+      },
+    ].filter(Boolean);
+    if (!glucoseDate || !readings.length) {
+      setMessage('Enter a date and at least one fasting or bedtime glucose value in mg/dL.');
       return;
     }
-    if (parsed.value < 20 || parsed.value > 600) {
-      setMessage('Morning glucose should be entered in mg/dL. Check the value before saving.');
+    if (readings.some(({ parsed }) => parsed.value < 20 || parsed.value > 600)) {
+      setMessage('Glucose readings should be entered in mg/dL. Check the value before saving.');
       return;
     }
 
-    await saveImport('glucose', 'manual morning glucose', [{
+    await saveImport('glucose', 'manual daily glucose', readings.map(({ metric, parsed, externalId, measuredAt }) => ({
       id: createRecordId(),
       source: 'glucose',
       date: glucoseDate,
-      metric: GLUCOSE_METRIC,
+      metric,
       value: parsed.value,
       rawValue: parsed.raw,
       unit: 'mg/dL',
       importer: 'manual',
       provider: 'manual',
-      externalId: `morning-glucose-${glucoseDate}`,
-      measuredAt: `${glucoseDate}T00:00:00`,
-    }]);
-    setGlucoseValue('');
+      externalId,
+      measuredAt,
+    })));
+    setFastingGlucoseValue('');
+    setBedtimeGlucoseValue('');
   }
 
   function importCsv(source, file) {
@@ -1454,12 +1480,12 @@ function App() {
           <div className="import-card-header">
             <Activity size={22} />
             <div>
-              <h2>Morning Glucose</h2>
-              <p>Record your wake-up fasting blood sugar as a daily mg/dL measurement.</p>
+              <h2>Daily Glucose</h2>
+              <p>Record wake-up fasting and bedtime blood sugar as daily mg/dL measurements.</p>
             </div>
           </div>
         </div>
-        <form className="manual-form" onSubmit={saveGlucoseReading}>
+        <form className="manual-form" onSubmit={saveGlucoseReadings}>
           <label>
             <span>Date</span>
             <input
@@ -1469,21 +1495,34 @@ function App() {
             />
           </label>
           <label>
-            <span>mg/dL</span>
+            <span>Fasting mg/dL</span>
             <input
               type="number"
               inputMode="decimal"
               min="20"
               max="600"
               step="0.1"
-              value={glucoseValue}
-              onChange={(event) => setGlucoseValue(event.target.value)}
+              value={fastingGlucoseValue}
+              onChange={(event) => setFastingGlucoseValue(event.target.value)}
               placeholder="95"
+            />
+          </label>
+          <label>
+            <span>Bedtime mg/dL</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="20"
+              max="600"
+              step="0.1"
+              value={bedtimeGlucoseValue}
+              onChange={(event) => setBedtimeGlucoseValue(event.target.value)}
+              placeholder="110"
             />
           </label>
           <button className="secondary-button glucose-button" type="submit" disabled={importsDisabled}>
             <Activity size={17} />
-            Save Reading
+            Save Readings
           </button>
         </form>
       </section>
@@ -1568,7 +1607,7 @@ function App() {
           </div>
           <p className="report-meta">Generated {new Date().toLocaleDateString()} · Health Tracker {APP_VERSION}{peptideData.user ? ` · Peptide profile: ${peptideData.user.displayName}` : ''}</p>
           <div className="report-grid">
-            {overviewCards.slice(0, 7).map((card) => {
+            {overviewCards.slice(0, 8).map((card) => {
               const latest = latestRecord(records, card.source, card.metric);
               const trendForCard = summarizeTrend(recordsForSeries(records, card).filter((record) => record.unit === latest?.unit));
               return (
