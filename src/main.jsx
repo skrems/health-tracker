@@ -727,6 +727,12 @@ function dedupeRecords(existing, incoming) {
   return [...existing, ...fresh].sort((a, b) => a.date.localeCompare(b.date) || a.metric.localeCompare(b.metric));
 }
 
+function mergeOverrideRecords(existing, incoming) {
+  const byKey = new Map(existing.map((record) => [rowHash(record), record]));
+  incoming.forEach((record) => byKey.set(rowHash(record), record));
+  return [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date) || a.metric.localeCompare(b.metric));
+}
+
 function summarizeTrend(records) {
   if (records.length < 2) return null;
   const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
@@ -820,11 +826,11 @@ async function fetchApiRecords() {
   return ensureRecordGroups(await response.json());
 }
 
-async function postImport(source, fileName, records) {
+async function postImport(source, fileName, records, overrideExisting = false) {
   const response = await fetch('/api/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source, fileName, records }),
+    body: JSON.stringify({ source, fileName, records, overrideExisting }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -1002,6 +1008,7 @@ function App() {
   const [glucoseDate, setGlucoseDate] = useState(todayDateString());
   const [fastingGlucoseValue, setFastingGlucoseValue] = useState('');
   const [bedtimeGlucoseValue, setBedtimeGlucoseValue] = useState('');
+  const [overrideGlucose, setOverrideGlucose] = useState(false);
   const [peptideConnection, setPeptideConnection] = useState('loading');
   const [peptideData, setPeptideData] = useState({ user: null, doses: [] });
   const [peptideError, setPeptideError] = useState('');
@@ -1150,7 +1157,7 @@ function App() {
   const peptideTotals = useMemo(() => peptideSummary(peptideData.doses), [peptideData.doses]);
   const peptideCorrelations = useMemo(() => peptideHealthCorrelations(records, peptideData.doses), [records, peptideData.doses]);
 
-  async function saveImport(source, fileName, normalized) {
+  async function saveImport(source, fileName, normalized, overrideExisting = false) {
     if (!normalized.length) {
       setMessage(`No recognized ${SOURCE_META[source].label.toLowerCase()} data points were found in ${fileName}. Check that the file matches the expected columns.`);
       return;
@@ -1161,10 +1168,14 @@ function App() {
     }
     if (storageMode === 'sqlite') {
       try {
-        const result = await postImport(source, fileName, normalized);
+        const result = await postImport(source, fileName, normalized, overrideExisting);
         setRecords(result.records);
         setActiveSource(source);
-        setMessage(`Imported ${result.insertedCount} new ${SOURCE_META[source].label.toLowerCase()} data points into SQLite from ${fileName}. ${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'} skipped.`);
+        const parts = [];
+        if (result.insertedCount) parts.push(`${result.insertedCount} new`);
+        if (result.overriddenCount) parts.push(`${result.overriddenCount} overridden`);
+        if (result.duplicateCount) parts.push(`${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'} skipped`);
+        setMessage(`${parts.join(', ') || 'No'} ${SOURCE_META[source].label.toLowerCase()} data point${result.insertedCount + result.overriddenCount === 1 ? '' : 's'} processed in SQLite from ${fileName}.`);
         return;
       } catch (error) {
         setStorageMode('browser');
@@ -1174,54 +1185,42 @@ function App() {
 
     setRecords((current) => ({
       ...current,
-      [source]: dedupeRecords(current[source] || [], normalized),
+      [source]: source === 'glucose' && overrideExisting
+        ? mergeOverrideRecords(current[source] || [], normalized)
+        : dedupeRecords(current[source] || [], normalized),
     }));
     setActiveSource(source);
     setMessage(`Imported ${normalized.length} ${SOURCE_META[source].label.toLowerCase()} data points from ${fileName}.`);
   }
 
-  async function saveGlucoseReadings(event) {
+  async function saveGlucoseReading(event, timing) {
     event.preventDefault();
-    const fasting = parseNumber(fastingGlucoseValue);
-    const bedtime = parseNumber(bedtimeGlucoseValue);
-    const readings = [
-      fasting && {
-        metric: FASTING_GLUCOSE_METRIC,
-        parsed: fasting,
-        externalId: `morning-glucose-${glucoseDate}`,
-        measuredAt: `${glucoseDate}T00:00:00`,
-      },
-      bedtime && {
-        metric: BEDTIME_GLUCOSE_METRIC,
-        parsed: bedtime,
-        externalId: `bedtime-glucose-${glucoseDate}`,
-        measuredAt: `${glucoseDate}T23:59:00`,
-      },
-    ].filter(Boolean);
-    if (!glucoseDate || !readings.length) {
-      setMessage('Enter a date and at least one fasting or bedtime glucose value in mg/dL.');
+    const isFasting = timing === 'fasting';
+    const parsed = parseNumber(isFasting ? fastingGlucoseValue : bedtimeGlucoseValue);
+    if (!glucoseDate || !parsed) {
+      setMessage(`Enter a date and ${isFasting ? 'fasting' : 'bedtime'} glucose value in mg/dL.`);
       return;
     }
-    if (readings.some(({ parsed }) => parsed.value < 20 || parsed.value > 600)) {
+    if (parsed.value < 20 || parsed.value > 600) {
       setMessage('Glucose readings should be entered in mg/dL. Check the value before saving.');
       return;
     }
 
-    await saveImport('glucose', 'manual daily glucose', readings.map(({ metric, parsed, externalId, measuredAt }) => ({
+    await saveImport('glucose', `manual ${timing} glucose`, [{
       id: createRecordId(),
       source: 'glucose',
       date: glucoseDate,
-      metric,
+      metric: isFasting ? FASTING_GLUCOSE_METRIC : BEDTIME_GLUCOSE_METRIC,
       value: parsed.value,
       rawValue: parsed.raw,
       unit: 'mg/dL',
       importer: 'manual',
       provider: 'manual',
-      externalId,
-      measuredAt,
-    })));
-    setFastingGlucoseValue('');
-    setBedtimeGlucoseValue('');
+      externalId: isFasting ? `morning-glucose-${glucoseDate}` : `bedtime-glucose-${glucoseDate}`,
+      measuredAt: isFasting ? `${glucoseDate}T00:00:00` : `${glucoseDate}T23:59:00`,
+    }], overrideGlucose);
+    if (isFasting) setFastingGlucoseValue('');
+    else setBedtimeGlucoseValue('');
   }
 
   function importCsv(source, file) {
@@ -1491,7 +1490,7 @@ function App() {
             </div>
           </div>
         </div>
-        <form className="manual-form" onSubmit={saveGlucoseReadings}>
+        <div className="manual-form">
           <label>
             <span>Date</span>
             <input
@@ -1500,37 +1499,49 @@ function App() {
               onChange={(event) => setGlucoseDate(event.target.value)}
             />
           </label>
-          <label>
-            <span>Fasting mg/dL</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="20"
-              max="600"
-              step="0.1"
-              value={fastingGlucoseValue}
-              onChange={(event) => setFastingGlucoseValue(event.target.value)}
-              placeholder="95"
-            />
+          <form className="glucose-reading-form" onSubmit={(event) => saveGlucoseReading(event, 'fasting')}>
+            <label>
+              <span>Fasting mg/dL</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="20"
+                max="600"
+                step="0.1"
+                value={fastingGlucoseValue}
+                onChange={(event) => setFastingGlucoseValue(event.target.value)}
+                placeholder="95"
+              />
+            </label>
+            <button className="secondary-button glucose-button" type="submit" disabled={importsDisabled}>
+              <Activity size={17} />
+              Save Fasting
+            </button>
+          </form>
+          <form className="glucose-reading-form" onSubmit={(event) => saveGlucoseReading(event, 'bedtime')}>
+            <label>
+              <span>Bedtime mg/dL</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="20"
+                max="600"
+                step="0.1"
+                value={bedtimeGlucoseValue}
+                onChange={(event) => setBedtimeGlucoseValue(event.target.value)}
+                placeholder="110"
+              />
+            </label>
+            <button className="secondary-button glucose-button" type="submit" disabled={importsDisabled}>
+              <Activity size={17} />
+              Save Bedtime
+            </button>
+          </form>
+          <label className="override-toggle">
+            <input type="checkbox" checked={overrideGlucose} onChange={(event) => setOverrideGlucose(event.target.checked)} />
+            <span>Override existing reading for this date and time</span>
           </label>
-          <label>
-            <span>Bedtime mg/dL</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="20"
-              max="600"
-              step="0.1"
-              value={bedtimeGlucoseValue}
-              onChange={(event) => setBedtimeGlucoseValue(event.target.value)}
-              placeholder="110"
-            />
-          </label>
-          <button className="secondary-button glucose-button" type="submit" disabled={importsDisabled}>
-            <Activity size={17} />
-            Save Readings
-          </button>
-        </form>
+        </div>
       </section>
 
       <section className="warehouse-import">

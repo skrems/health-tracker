@@ -117,6 +117,28 @@ const insertMeasurement = db.prepare(`
   )
 `);
 
+const findMeasurementByUniqueKey = db.prepare('SELECT id FROM measurements WHERE unique_key = ?');
+
+const overrideMeasurement = db.prepare(`
+  UPDATE measurements
+  SET
+    provider = @provider,
+    external_id = @externalId,
+    measured_at = @measuredAt,
+    date = @date,
+    metric = @metric,
+    value = @value,
+    raw_value = @rawValue,
+    comparator = @comparator,
+    unit = @unit,
+    status = @status,
+    reference_range = @referenceRange,
+    reference_low = @referenceLow,
+    reference_high = @referenceHigh,
+    import_batch_id = @importBatchId
+  WHERE unique_key = @uniqueKey
+`);
+
 const selectMeasurements = db.prepare(`
   SELECT
     id,
@@ -243,7 +265,7 @@ app.get('/api/import-batches', (_req, res) => {
 });
 
 app.post('/api/import', (req, res) => {
-  const { source, fileName = '', records = [] } = req.body || {};
+  const { source, fileName = '', records = [], overrideExisting = false } = req.body || {};
   if (!['labs', 'dexa', 'scale', 'glucose'].includes(source)) {
     res.status(400).json({ error: 'source must be labs, dexa, scale, or glucose' });
     return;
@@ -256,15 +278,21 @@ app.post('/api/import', (req, res) => {
   const result = db.transaction(() => {
     const batch = insertBatch.run({ source, fileName, recordCount: records.length });
     let insertedCount = 0;
+    let overriddenCount = 0;
     for (const record of records) {
       const normalized = normalizeIncomingRecord(record, source, batch.lastInsertRowid);
       if (!normalized) continue;
+      if (source === 'glucose' && overrideExisting && findMeasurementByUniqueKey.get(normalized.uniqueKey)) {
+        overrideMeasurement.run(normalized);
+        overriddenCount += 1;
+        continue;
+      }
       const insert = insertMeasurement.run(normalized);
       insertedCount += insert.changes;
     }
-    const duplicateCount = records.length - insertedCount;
+    const duplicateCount = records.length - insertedCount - overriddenCount;
     updateBatch.run({ id: batch.lastInsertRowid, insertedCount, duplicateCount });
-    return { batchId: batch.lastInsertRowid, insertedCount, duplicateCount };
+    return { batchId: batch.lastInsertRowid, insertedCount, overriddenCount, duplicateCount };
   })();
 
   res.json({

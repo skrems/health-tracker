@@ -253,7 +253,26 @@ h2 {
   min-width: 128px;
 }
 
+.glucose-reading-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+}
+
+.glucose-reading-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 128px;
+}
+
 .manual-form span {
+  color: #607086;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.glucose-reading-form span {
   color: #607086;
   font-size: 0.78rem;
   font-weight: 850;
@@ -267,6 +286,40 @@ h2 {
   border-radius: 8px;
   color: #172234;
   background: #fff;
+}
+
+.glucose-reading-form input {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #cbd6e2;
+  border-radius: 8px;
+  color: #172234;
+  background: #fff;
+}
+
+.override-toggle {
+  display: inline-flex !important;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0 !important;
+  color: #52657b;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.override-toggle input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  accent-color: #b3265e;
+}
+
+.override-toggle span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: none;
 }
 
 .glucose-button {
@@ -1157,8 +1210,16 @@ th {
   }
 
   .manual-form label,
-  .manual-form button {
+  .manual-form button,
+  .glucose-reading-form label,
+  .glucose-reading-form button {
     width: 100%;
+  }
+
+  .glucose-reading-form {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .chart-frame {

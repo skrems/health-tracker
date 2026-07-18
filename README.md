@@ -55,6 +55,8 @@ When running through the Node server or Docker container, imported data is store
 
 Daily glucose is entered directly in the dashboard. Fasting and bedtime readings are stored as separate `Fasting Glucose` and `Bedtime Glucose` metrics, charted together as color-coded lines, and analyzed independently.
 
+Each has its own save action. Duplicate protection is on by default; use the override toggle to replace an existing reading for the same date and time of day.
+
 ## Health Overview
 
 The Health Overview section provides a single pane across bloodwork, DEXA, and Wyze data. It surfaces the latest values for body composition, cardiometabolic labs, inflammation, nutrients, and hormones, while showing paired DEXA/Wyze values where both methods exist.
