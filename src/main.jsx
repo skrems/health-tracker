@@ -161,7 +161,7 @@ const COMPARISON_METRICS = [
     unit: 'mixed',
     note: 'DEXA VAT mass and Wyze visceral-fat score are different units, so compare direction and timing rather than absolute equality.',
     series: [
-      { key: 'dexaVatMass', source: 'dexa', metric: 'VAT Mass', label: 'DEXA VAT Mass lb', color: METHOD_COLORS.dexa },
+      { key: 'dexaVatMass', source: 'dexa', metric: 'VAT Mass', unit: 'lb', label: 'DEXA VAT Mass lb', color: METHOD_COLORS.dexa },
       { key: 'scaleVisceralFat', source: 'scale', metric: 'Scale Visceral Fat', label: 'Wyze Visceral Score', color: METHOD_COLORS.scale },
     ],
   },
@@ -751,6 +751,63 @@ function recordsForSeries(records, series) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+const MASS_UNIT_TO_POUNDS = {
+  lb: 1,
+  lbs: 1,
+  pound: 1,
+  pounds: 1,
+  kg: 2.2046226218,
+  kgs: 2.2046226218,
+  kilogram: 2.2046226218,
+  kilograms: 2.2046226218,
+};
+
+function normalizedMassUnit(unit) {
+  const normalized = String(unit || '').trim().toLowerCase();
+  if (!MASS_UNIT_TO_POUNDS[normalized]) return '';
+  return MASS_UNIT_TO_POUNDS[normalized] === 1 ? 'lb' : 'kg';
+}
+
+function convertMass(value, fromUnit, toUnit) {
+  const pounds = value * MASS_UNIT_TO_POUNDS[fromUnit];
+  return toUnit === 'lb' ? pounds : pounds / MASS_UNIT_TO_POUNDS.kg;
+}
+
+function normalizeMassRecords(records, requestedUnit = '') {
+  const units = records.map((record) => normalizedMassUnit(record.unit));
+  if (!units.length || units.some((unit) => !unit)) return records;
+
+  const uniqueUnits = new Set(units);
+  const preferredUnit = normalizedMassUnit(requestedUnit);
+  const targetUnit = preferredUnit || (uniqueUnits.has('lb') ? 'lb' : 'kg');
+  const hasMixedMassUnits = uniqueUnits.size > 1;
+  const normalized = records.map((record, index) => {
+    const fromUnit = units[index];
+    if (fromUnit === targetUnit) return { ...record, unit: targetUnit };
+    return {
+      ...record,
+      value: convertMass(record.value, fromUnit, targetUnit),
+      rawValue: undefined,
+      unit: targetUnit,
+    };
+  });
+
+  if (!hasMixedMassUnits) return normalized;
+
+  // BodySpec may include the same DEXA value in a pounds master report and a
+  // kilograms regional report. Prefer the source already in the target unit.
+  return [...normalized.reduce((byDate, record, index) => {
+    const existing = byDate.get(record.date);
+    const isNativeTargetUnit = units[index] === targetUnit;
+    if (!existing || (isNativeTargetUnit && !existing.isNativeTargetUnit)) {
+      byDate.set(record.date, { record, isNativeTargetUnit });
+    }
+    return byDate;
+  }, new Map()).values()]
+    .map(({ record }) => record)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function dailyAverages(records) {
   const grouped = new Map();
   records.forEach((record) => {
@@ -878,7 +935,8 @@ async function fetchPeptideDoses() {
 function buildComparisonData(records, config) {
   const byDate = new Map();
   config.series.forEach((series) => {
-    dailyAverages(recordsForSeries(records, series)).forEach((point) => {
+    const seriesRecords = normalizeMassRecords(recordsForSeries(records, series), series.unit || config.unit);
+    dailyAverages(seriesRecords).forEach((point) => {
       if (!byDate.has(point.date)) byDate.set(point.date, { date: point.date });
       byDate.get(point.date)[series.key] = Number(point.value.toFixed(3));
     });
@@ -891,8 +949,8 @@ function latestNearestComparison(records, config) {
   const secondary = config.series.find((series) => series.source === 'scale');
   if (!primary || !secondary || config.unit === 'mixed') return null;
 
-  const primaryRecords = dailyAverages(recordsForSeries(records, primary));
-  const secondaryRecords = dailyAverages(recordsForSeries(records, secondary));
+  const primaryRecords = dailyAverages(normalizeMassRecords(recordsForSeries(records, primary), primary.unit || config.unit));
+  const secondaryRecords = dailyAverages(normalizeMassRecords(recordsForSeries(records, secondary), secondary.unit || config.unit));
   const latestPrimary = primaryRecords.at(-1);
   if (!latestPrimary || !secondaryRecords.length) return null;
 
@@ -1121,7 +1179,8 @@ function App() {
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [activeRecords, selectedMetric]);
 
-  const trend = summarizeTrend(selectedRecords);
+  const displayRecords = useMemo(() => normalizeMassRecords(selectedRecords), [selectedRecords]);
+  const trend = summarizeTrend(displayRecords);
   const isGlucoseOverlay = activeSource === 'glucose';
   const glucoseOverlayData = useMemo(() => buildComparisonData(records, { series: GLUCOSE_SERIES }), [records]);
   const comparisonConfig = COMPARISON_METRICS.find((metric) => metric.id === selectedComparison) || COMPARISON_METRICS[0];
@@ -1134,7 +1193,10 @@ function App() {
   const comparisonSeriesCounts = useMemo(() => {
     return comparisonConfig.series.map((series) => ({
       ...series,
-      count: new Set(recordsForSeries(records, series).map((record) => record.date)).size,
+      count: new Set(
+        normalizeMassRecords(recordsForSeries(records, series), series.unit || comparisonConfig.unit)
+          .map((record) => record.date),
+      ).size,
     }));
   }, [records, comparisonConfig]);
   const flaggedLabs = useMemo(() => {
@@ -1853,17 +1915,17 @@ function App() {
           </div>
 
           <div className="chart-frame">
-            {(isGlucoseOverlay ? glucoseOverlayData.length : selectedRecords.length) ? (
+            {(isGlucoseOverlay ? glucoseOverlayData.length : displayRecords.length) ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={isGlucoseOverlay ? glucoseOverlayData : selectedRecords} margin={{ top: 18, right: 26, bottom: 8, left: 8 }}>
+                <LineChart data={isGlucoseOverlay ? glucoseOverlayData : displayRecords} margin={{ top: 18, right: 26, bottom: 8, left: 8 }}>
                   <CartesianGrid stroke="#d9e0e8" strokeDasharray="4 4" />
                   <XAxis dataKey="date" stroke="#5f6f82" tickMargin={10} />
                   <YAxis stroke="#5f6f82" width={48} domain={['auto', 'auto']} />
                   <Tooltip content={isGlucoseOverlay ? <GlucoseTooltip /> : <ChartTooltip />} />
-                  {!isGlucoseOverlay && selectedRecords[0]?.low !== undefined && (
+                  {!isGlucoseOverlay && displayRecords[0]?.low !== undefined && (
                     <Line dataKey="low" stroke="#a9b4c1" dot={false} strokeDasharray="5 5" />
                   )}
-                  {!isGlucoseOverlay && selectedRecords[0]?.high !== undefined && (
+                  {!isGlucoseOverlay && displayRecords[0]?.high !== undefined && (
                     <Line dataKey="high" stroke="#a9b4c1" dot={false} strokeDasharray="5 5" />
                   )}
                   {isGlucoseOverlay ? GLUCOSE_SERIES.map((series) => (
@@ -1881,13 +1943,13 @@ function App() {
 
           <div className="insight-row">
             <Insight title="Latest" icon={CalendarDays}>
-              {selectedRecords.length ? `${selectedRecords.at(-1).rawValue || selectedRecords.at(-1).value} ${selectedRecords.at(-1).unit} on ${selectedRecords.at(-1).date}` : 'No data yet'}
+              {displayRecords.length ? `${displayRecords.at(-1).rawValue || formatValue(displayRecords.at(-1).value)} ${displayRecords.at(-1).unit} on ${displayRecords.at(-1).date}` : 'No data yet'}
             </Insight>
             <Insight title="Trend" icon={BarChart3}>
               {trend ? `${formatDelta(trend.monthly)} ${trend.last.unit} per month (${formatPercent(trend.pct)} overall)` : 'Import at least two dates'}
             </Insight>
             <Insight title="Reference" icon={Database}>
-              {selectedRecords.at(-1)?.referenceRange || 'No reference range available'}
+              {displayRecords.at(-1)?.referenceRange || 'No reference range available'}
             </Insight>
           </div>
 
@@ -1903,11 +1965,11 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {selectedRecords.map((record) => (
+                {displayRecords.map((record) => (
                   <tr key={record.id}>
                     <td>{record.date}</td>
                     <td>{record.metric}</td>
-                    <td>{record.rawValue || record.value}</td>
+                    <td>{record.rawValue || formatValue(record.value)}</td>
                     <td>{record.unit}</td>
                     <td><span className={`status ${normalizeKey(record.status)}`}>{record.status || 'recorded'}</span></td>
                   </tr>
@@ -1997,7 +2059,7 @@ function ChartTooltip({ active, payload, label }) {
   return (
     <div className="tooltip">
       <strong>{label}</strong>
-      <span>{value?.payload.rawValue || value?.value} {value?.payload.unit}</span>
+      <span>{value?.payload.rawValue || formatValue(value?.value)} {value?.payload.unit}</span>
     </div>
   );
 }

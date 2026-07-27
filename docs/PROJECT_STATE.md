@@ -8,7 +8,7 @@ Last check-in: 2026-07-12
 - ZimaOS Docker deployment works.
 - ZimaOS app can import data successfully.
 - SQLite-backed persistence is active.
-- Current container image: `ghcr.io/skrems/health-tracker:v1.4.2`.
+- Current container image: `ghcr.io/skrems/health-tracker:v1.4.3`.
 - ZimaOS SQLite database path: `/DATA/AppData/health-tracker/data/health-tracker.sqlite`.
 
 ## Import Status
@@ -39,6 +39,7 @@ Last check-in: 2026-07-12
 - `v1.4.0`: added distinct manual bedtime glucose readings alongside wake-up fasting readings.
 - `v1.4.1`: added a shared fasting-versus-bedtime glucose overlay chart.
 - `v1.4.2`: added per-reading glucose save actions and an explicit override path for same-day fasting or bedtime corrections.
+- `v1.4.3`: normalized compatible DEXA mass measurements to one chart unit and removed duplicate same-day pound/kilogram display points.
 
 ## Next Useful Work
 
